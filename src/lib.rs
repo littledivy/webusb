@@ -212,6 +212,11 @@ macro_rules! assert_return {
 
 const kDeviceCapabilityDescriptorType: u8 = 0x10;
 const kPlatformDevCapabilityType: u8 = 0x05;
+const kWebUsbCapabilityUUID: &[u8; 16] = &[
+  // Little-endian encoding of {3408b638-09a9-47a0-8bfd-a0768815b665}.
+  0x38, 0xB6, 0x08, 0x34, 0xA9, 0x09, 0xA0, 0x47, 0x8B, 0xFD, 0xA0, 0x76, 0x88,
+  0x15, 0xB6, 0x65,
+];
 
 // Based on Chromium implementation https://source.chromium.org/chromium/chromium/src/+/main:services/device/usb/webusb_descriptors.cc;l=133;
 pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
@@ -251,8 +256,14 @@ pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
     if bytes[2] != kPlatformDevCapabilityType {
       continue;
     }
+
     // atleast 20 bytes
     assert_return!(length < 20);
+
+    // PlatformCapabilityUUID
+    if &bytes[4..20] != kWebUsbCapabilityUUID {
+      continue;
+    }
 
     // The WebUSB capability descriptor must be at least 22 bytes (to allow for future versions).
     assert_return!(length < 22);
