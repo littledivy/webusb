@@ -212,6 +212,7 @@ macro_rules! assert_return {
 
 const kDeviceCapabilityDescriptorType: u8 = 0x10;
 const kPlatformDevCapabilityType: u8 = 0x05;
+const kGetUrlRequest: u16 = 0x02;
 const kWebUsbCapabilityUUID: &[u8; 16] = &[
   // Little-endian encoding of {3408b638-09a9-47a0-8bfd-a0768815b665}.
   0x38, 0xB6, 0x08, 0x34, 0xA9, 0x09, 0xA0, 0x47, 0x8B, 0xFD, 0xA0, 0x76, 0x88,
@@ -219,6 +220,7 @@ const kWebUsbCapabilityUUID: &[u8; 16] = &[
 ];
 
 // Based on Chromium implementation https://source.chromium.org/chromium/chromium/src/+/main:services/device/usb/webusb_descriptors.cc;l=133;
+// https://wicg.github.io/webusb/#webusb-platform-capability-descriptor
 pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
   // Too short
   assert_return!(bytes.len() < 5);
@@ -286,6 +288,27 @@ pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
   None
 }
 
+const kDescriptorType: u8 = 0x03;
+const kDescriptorMinLength: u8 = 3;
+
+pub(crate) fn parse_webusb_url(bytes: &[u8]) -> Option<String> {
+  assert_return!(bytes.len() < kDescriptorMinLength as usize);
+
+  let length = bytes[0];
+  assert_return!(length < kDescriptorMinLength);
+  assert_return!(length as usize > bytes.len());
+  assert_return!(bytes[1] != kDescriptorType);
+
+  let mut url = match bytes[2] {
+    0 => String::from("http://"),
+    1 => String::from("https://"),
+    _ => return None,
+  };
+
+  url.push_str(&String::from_utf8_lossy(&bytes[3..length as usize - 3]));
+  Some(url)
+}
+
 /// A WebUSB Context. Provides APIs for device enumaration.
 pub struct Context(rusb::Context);
 
@@ -351,7 +374,26 @@ impl Context {
           )?;
 
           // Parse capibility from BOS descriptor
-          parse_bos(&new_buffer);
+          if let Some((vendor_code, landing_page_id)) = parse_bos(&new_buffer) {
+            let mut buffer = [0; 255];
+            let request_type = rusb::request_type(
+              rusb::Direction::In,
+              rusb::RequestType::Vendor,
+              rusb::Recipient::Device,
+            );
+
+            handle.read_control(
+              request_type,
+              vendor_code,
+              landing_page_id as u16,
+              kGetUrlRequest,
+              &mut buffer,
+              core::time::Duration::new(2, 0),
+            )?;
+
+            // Parse URL descriptor
+            let url = parse_webusb_url(&buffer);
+          }
         }
 
         let configuration = match config_descriptor {
