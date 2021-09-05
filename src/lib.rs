@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use rusb::UsbContext;
 
+use core::convert::TryFrom;
+
 pub use rusb;
 
 #[non_exhaustive]
@@ -159,30 +161,168 @@ impl UsbAlternateInterface {
   }
 }
 
-#[derive(Serialize, Clone)]
+/// Represents a WebUSB UsbDevice.
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsbDevice {
-  configurations: Vec<UsbConfiguration>,
-  configuration: Option<UsbConfiguration>,
-  device_class: u8,
-  device_subclass: u8,
-  device_protocol: u8,
-  device_version_major: u8,
-  device_version_minor: u8,
-  device_version_subminor: u8,
-  manufacturer_name: Option<String>,
-  product_id: u16,
-  product_name: Option<String>,
-  serial_number: Option<String>,
-  usb_version_major: u8,
-  usb_version_minor: u8,
-  usb_version_subminor: u8,
-  vendor_id: u16,
+  pub configurations: Vec<UsbConfiguration>,
+  pub configuration: Option<UsbConfiguration>,
+  pub device_class: u8,
+  pub device_subclass: u8,
+  pub device_protocol: u8,
+  pub device_version_major: u8,
+  pub device_version_minor: u8,
+  pub device_version_subminor: u8,
+  pub manufacturer_name: Option<String>,
+  pub product_id: u16,
+  pub product_name: Option<String>,
+  pub serial_number: Option<String>,
+  pub usb_version_major: u8,
+  pub usb_version_minor: u8,
+  pub usb_version_subminor: u8,
+  pub vendor_id: u16,
+  /// The `WEBUSB_URL` value. Present in devices with the WebUSB Platform Capability Descriptor.
+  #[serde(skip)]
+  pub url: Option<String>,
+  #[serde(skip)]
+  device: rusb::Device<rusb::Context>,
 }
 
-// Method to determine the transfer type from the device's
-// configuration descriptor and an endpoint address.
-fn transfer_type(
+impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
+  type Error = Error;
+
+  fn try_from(device: rusb::Device<rusb::Context>) -> Result<UsbDevice> {
+    let device_descriptor = device.device_descriptor()?;
+    let device_class = device_descriptor.class_code();
+    let usb_version = device_descriptor.usb_version();
+
+    let config_descriptor = device.active_config_descriptor();
+    let handle = device.open()?;
+    let read_bos_descriptors = usb_version.0 >= 2 && usb_version.1 >= 1;
+    let url = if read_bos_descriptors {
+      // Check descriptor.iManufacturer != 0 && descriptor.iProduct != 0 && descriptor.iSerialNumber != 0
+
+      // Read capability descriptor
+      let request_type = rusb::request_type(
+        rusb::Direction::In,
+        rusb::RequestType::Standard,
+        rusb::Recipient::Device,
+      );
+      let kGetDescriptorRequest = 0x06;
+
+      let mut buffer = [0; 5];
+      let length = handle.read_control(
+        request_type,
+        kGetDescriptorRequest,
+        kBosDescriptorType << 8,
+        0,
+        &mut buffer,
+        core::time::Duration::new(2, 0),
+      )?;
+      assert_eq!(length, 5);
+
+      // Read BOS descriptor
+      let new_length = (buffer[2] | (buffer[3].wrapping_shl(8)));
+      let mut new_buffer = vec![0; new_length as usize];
+      let request_type = rusb::request_type(
+        rusb::Direction::In,
+        rusb::RequestType::Standard,
+        rusb::Recipient::Device,
+      );
+      handle.read_control(
+        request_type,
+        kGetDescriptorRequest,
+        kBosDescriptorType << 8,
+        0,
+        &mut new_buffer,
+        core::time::Duration::new(2, 0),
+      )?;
+
+      // Parse capibility from BOS descriptor
+      if let Some((vendor_code, landing_page_id)) = parse_bos(&new_buffer) {
+        let mut buffer = [0; 255];
+        let request_type = rusb::request_type(
+          rusb::Direction::In,
+          rusb::RequestType::Vendor,
+          rusb::Recipient::Device,
+        );
+
+        handle.read_control(
+          request_type,
+          vendor_code,
+          landing_page_id as u16,
+          kGetUrlRequest,
+          &mut buffer,
+          core::time::Duration::new(2, 0),
+        )?;
+
+        // Parse URL descriptor
+        let url = parse_webusb_url(&buffer);
+        url
+      } else {
+        None
+      }
+    } else {
+      None
+    };
+
+    let configuration = match config_descriptor {
+      Ok(config_descriptor) => {
+        UsbConfiguration::from(config_descriptor, &handle).ok()
+      }
+      Err(_) => None,
+    };
+
+    let num_configurations = device_descriptor.num_configurations();
+    let mut configurations: Vec<UsbConfiguration> = vec![];
+    for idx in 0..num_configurations {
+      if let Ok(curr_config_descriptor) = device.config_descriptor(idx) {
+        configurations
+          .push(UsbConfiguration::from(curr_config_descriptor, &handle)?);
+      }
+    }
+
+    let device_version = device_descriptor.device_version();
+    let manufacturer_name = handle
+      .read_manufacturer_string_ascii(&device_descriptor)
+      .ok();
+    let product_name =
+      handle.read_product_string_ascii(&device_descriptor).ok();
+    let serial_number = handle
+      .read_serial_number_string_ascii(&device_descriptor)
+      .ok();
+
+    let usb_device = UsbDevice {
+      configurations,
+      configuration,
+      device_class,
+      device_subclass: device_descriptor.sub_class_code(),
+      device_protocol: device_descriptor.protocol_code(),
+      device_version_major: device_version.major(),
+      device_version_minor: device_version.minor(),
+      device_version_subminor: device_version.sub_minor(),
+      product_id: device_descriptor.product_id(),
+      usb_version_major: usb_version.major(),
+      usb_version_minor: usb_version.minor(),
+      usb_version_subminor: usb_version.sub_minor(),
+      vendor_id: device_descriptor.vendor_id(),
+      manufacturer_name,
+      product_name,
+      serial_number,
+      url,
+      device,
+    };
+
+    // Explicitly close the device.
+    drop(handle);
+
+    Ok(usb_device)
+  }
+}
+
+/// Method to determine the transfer type from the device's
+/// configuration descriptor and an endpoint address.
+pub fn transfer_type(
   cnf: rusb::ConfigDescriptor,
   addr: u8,
 ) -> Option<rusb::TransferType> {
@@ -213,8 +353,8 @@ macro_rules! assert_return {
 const kDeviceCapabilityDescriptorType: u8 = 0x10;
 const kPlatformDevCapabilityType: u8 = 0x05;
 const kGetUrlRequest: u16 = 0x02;
+// Little-endian encoding of {3408b638-09a9-47a0-8bfd-a0768815b665}.
 const kWebUsbCapabilityUUID: &[u8; 16] = &[
-  // Little-endian encoding of {3408b638-09a9-47a0-8bfd-a0768815b665}.
   0x38, 0xB6, 0x08, 0x34, 0xA9, 0x09, 0xA0, 0x47, 0x8B, 0xFD, 0xA0, 0x76, 0x88,
   0x15, 0xB6, 0x65,
 ];
@@ -320,135 +460,19 @@ impl Context {
   }
 
   pub fn devices(&self) -> Result<Vec<UsbDevice>> {
-    let mut usbdevices: Vec<UsbDevice> = vec![];
     let devices = self.0.devices()?;
-    for device in devices.iter() {
-      let device_descriptor = device.device_descriptor()?;
-      let device_class = device_descriptor.class_code();
-      // Do not list hubs. Ignore them.
-      if device_class == 9 {
-        continue;
-      }
 
-      let usb_version = device_descriptor.usb_version();
-
-      let config_descriptor = device.active_config_descriptor();
-      if let Ok(handle) = device.open() {
-        let read_bos_descriptors = usb_version.0 >= 2 && usb_version.1 >= 1;
-        if read_bos_descriptors {
-          // Check descriptor.iManufacturer != 0 && descriptor.iProduct != 0 && descriptor.iSerialNumber != 0
-
-          // Read capability descriptor
-          let request_type = rusb::request_type(
-            rusb::Direction::In,
-            rusb::RequestType::Standard,
-            rusb::Recipient::Device,
-          );
-          let kGetDescriptorRequest = 0x06;
-
-          let mut buffer = [0; 5];
-          let length = handle.read_control(
-            request_type,
-            kGetDescriptorRequest,
-            kBosDescriptorType << 8,
-            0,
-            &mut buffer,
-            core::time::Duration::new(2, 0),
-          )?;
-          assert_eq!(length, 5);
-
-          // Read BOS descriptor
-          let new_length = (buffer[2] | (buffer[3].wrapping_shl(8)));
-          let mut new_buffer = vec![0; new_length as usize];
-          let request_type = rusb::request_type(
-            rusb::Direction::In,
-            rusb::RequestType::Standard,
-            rusb::Recipient::Device,
-          );
-          handle.read_control(
-            request_type,
-            kGetDescriptorRequest,
-            kBosDescriptorType << 8,
-            0,
-            &mut new_buffer,
-            core::time::Duration::new(2, 0),
-          )?;
-
-          // Parse capibility from BOS descriptor
-          if let Some((vendor_code, landing_page_id)) = parse_bos(&new_buffer) {
-            let mut buffer = [0; 255];
-            let request_type = rusb::request_type(
-              rusb::Direction::In,
-              rusb::RequestType::Vendor,
-              rusb::Recipient::Device,
-            );
-
-            handle.read_control(
-              request_type,
-              vendor_code,
-              landing_page_id as u16,
-              kGetUrlRequest,
-              &mut buffer,
-              core::time::Duration::new(2, 0),
-            )?;
-
-            // Parse URL descriptor
-            let url = parse_webusb_url(&buffer);
-          }
-        }
-
-        let configuration = match config_descriptor {
-          Ok(config_descriptor) => {
-            UsbConfiguration::from(config_descriptor, &handle).ok()
-          }
-          Err(_) => None,
-        };
-
-        let num_configurations = device_descriptor.num_configurations();
-        let mut configurations: Vec<UsbConfiguration> = vec![];
-        for idx in 0..num_configurations {
-          if let Ok(curr_config_descriptor) = device.config_descriptor(idx) {
-            configurations
-              .push(UsbConfiguration::from(curr_config_descriptor, &handle)?);
-          }
-        }
-
-        let device_version = device_descriptor.device_version();
-        let manufacturer_name = handle
-          .read_manufacturer_string_ascii(&device_descriptor)
-          .ok();
-        let product_name =
-          handle.read_product_string_ascii(&device_descriptor).ok();
-        let serial_number = handle
-          .read_serial_number_string_ascii(&device_descriptor)
-          .ok();
-
-        let usbdevice = UsbDevice {
-          configurations,
-          configuration,
-          device_class,
-          device_subclass: device_descriptor.sub_class_code(),
-          device_protocol: device_descriptor.protocol_code(),
-          device_version_major: device_version.major(),
-          device_version_minor: device_version.minor(),
-          device_version_subminor: device_version.sub_minor(),
-          product_id: device_descriptor.product_id(),
-          usb_version_major: usb_version.major(),
-          usb_version_minor: usb_version.minor(),
-          usb_version_subminor: usb_version.sub_minor(),
-          vendor_id: device_descriptor.vendor_id(),
-          manufacturer_name,
-          product_name,
-          serial_number,
-        };
-
-        // Explicitly close the device.
-        drop(handle);
-
-        usbdevices.push(usbdevice);
-      }
-    }
-    Ok(usbdevices)
+    let usb_devices: Vec<UsbDevice> = devices
+      .iter()
+      .filter(|d| {
+        // Do not list hubs.
+        // TODO(@littledivy): WTF is this code
+        d.device_descriptor().is_ok()
+          && d.device_descriptor().unwrap().class_code() != 9
+      })
+      .map(|d| UsbDevice::try_from(d))
+      .collect::<Result<Vec<UsbDevice>>>()?;
+    Ok(usb_devices)
   }
 }
 
@@ -472,20 +496,23 @@ mod tests {
   ];
 
   const kExampleUrlDescriptor: &[u8] = &[
-    0x19, 0x03, 0x01, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o',
-    b'm',  b'/',  b'i',  b'n', b'd', b'e', b'x', b'.', b'h', b't', b'm', b'l'
+    0x19, 0x03, 0x01, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c',
+    b'o', b'm', b'/', b'i', b'n', b'd', b'e', b'x', b'.', b'h', b't', b'm',
+    b'l',
   ];
 
   #[test]
   fn test_parse_bos() {
     assert_eq!(parse_bos(kExampleBosDescriptor), Some((0x42, 0x01)));
   }
-  
+
   #[test]
   fn test_parse_url_descriptor() {
-    assert_eq!(parse_webusb_url(kExampleUrlDescriptor), Some("https://example.com/index.html".to_string()));
+    assert_eq!(
+      parse_webusb_url(kExampleUrlDescriptor),
+      Some("https://example.com/index.html".to_string())
+    );
   }
 
   // TODO(@littledivy): Import more tests from https://source.chromium.org/chromium/chromium/src/+/main:services/device/usb/webusb_descriptors_unittest.cc
-
 }
