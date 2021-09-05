@@ -19,6 +19,7 @@ use crate::descriptors::parse_webusb_url;
 pub enum Error {
   Usb(rusb::Error),
   NotFound,
+  InvalidState,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -189,11 +190,80 @@ pub struct UsbDevice {
   pub usb_version_minor: u8,
   pub usb_version_subminor: u8,
   pub vendor_id: u16,
+  pub opened: bool,
   /// The `WEBUSB_URL` value. Present in devices with the WebUSB Platform Capability Descriptor.
   #[serde(skip)]
   pub url: Option<String>,
   #[serde(skip)]
   device: rusb::Device<rusb::Context>,
+  #[serde(skip)]
+  device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
+}
+
+impl UsbDevice {
+  pub fn open(&mut self) -> Result<()> {
+    // 3. device is already open?
+    if self.opened {
+      return Ok(());
+    }
+
+    // 4.
+    let handle = self.device.open()?;
+    self.device_handle = Some(handle);
+
+    // 5.
+    self.opened = true;
+    Ok(())
+  }
+
+  pub fn close(&mut self) -> Result<()> {
+    // 3. device is already closed?
+    if !self.opened {
+      return Ok(());
+    }
+
+    match &self.device_handle {
+      Some(handle_ref) => {
+        // 5-6.
+        // release claimed interfaces, close device and release handle
+        drop(handle_ref);
+      }
+      None => unreachable!(),
+    };
+
+    self.device_handle = None;
+
+    // 7.
+    self.opened = false;
+    Ok(())
+  }
+
+  /// `configuration_value` is the bConfigurationValue of the device configuration.
+  pub fn select_configuration(
+    &mut self,
+    configuration_value: u8,
+  ) -> Result<()> {
+    // 4.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 5-6.
+    let handle = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        // Calls `libusb_set_configuration`
+        handle_ref.set_active_configuration(configuration_value)?;
+        handle_ref
+      }
+      None => unreachable!(),
+    };
+
+    // 7.
+    let configuration = self.device.active_config_descriptor()?;
+    self.configuration = Some(UsbConfiguration::from(configuration, &handle)?);
+
+    Ok(())
+  }
 }
 
 impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
@@ -317,8 +387,10 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       manufacturer_name,
       product_name,
       serial_number,
+      opened: false,
       url,
       device,
+      device_handle: None,
     };
 
     // Explicitly close the device.
