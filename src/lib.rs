@@ -243,6 +243,16 @@ impl UsbDevice {
     &mut self,
     configuration_value: u8,
   ) -> Result<()> {
+    // 3.
+    let configuration = match self
+      .configurations
+      .iter()
+      .find(|c| c.configuration_value == configuration_value)
+    {
+      Some(_) => self.device.config_descriptor(configuration_value)?,
+      None => return Err(Error::NotFound),
+    };
+
     // 4.
     if !self.opened {
       return Err(Error::InvalidState);
@@ -259,8 +269,43 @@ impl UsbDevice {
     };
 
     // 7.
-    let configuration = self.device.active_config_descriptor()?;
     self.configuration = Some(UsbConfiguration::from(configuration, &handle)?);
+
+    Ok(())
+  }
+
+  pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
+    // 2.
+    let mut interface = match self.configurations.iter_mut().find_map(|c| {
+      c.interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+    }) {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 3.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 4.
+    if interface.claimed {
+      return Ok(());
+    }
+
+    // 5.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        // Calls `libusb_set_configuration`
+        handle_ref.claim_interface(interface.interface_number)?;
+      }
+      None => unreachable!(),
+    };
+
+    // 6.
+    interface.claimed = true;
 
     Ok(())
   }
