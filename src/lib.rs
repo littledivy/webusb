@@ -291,6 +291,7 @@ pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
 const kDescriptorType: u8 = 0x03;
 const kDescriptorMinLength: u8 = 3;
 
+// http://wicg.github.io/webusb/#dfn-url-descriptor
 pub(crate) fn parse_webusb_url(bytes: &[u8]) -> Option<String> {
   assert_return!(bytes.len() < kDescriptorMinLength as usize);
 
@@ -305,7 +306,7 @@ pub(crate) fn parse_webusb_url(bytes: &[u8]) -> Option<String> {
     _ => return None,
   };
 
-  url.push_str(&String::from_utf8_lossy(&bytes[3..length as usize - 3]));
+  url.push_str(&String::from_utf8_lossy(&bytes[3..length as usize]));
   Some(url)
 }
 
@@ -454,6 +455,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
   use crate::parse_bos;
+  use crate::parse_webusb_url;
 
   const kExampleBosDescriptor: &[u8] = &[
     // BOS descriptor.
@@ -469,10 +471,21 @@ mod tests {
     0x00, 0x00, 0x01, 0x00,
   ];
 
+  const kExampleUrlDescriptor: &[u8] = &[
+    0x19, 0x03, 0x01, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o',
+    b'm',  b'/',  b'i',  b'n', b'd', b'e', b'x', b'.', b'h', b't', b'm', b'l'
+  ];
+
   #[test]
   fn test_parse_bos() {
     assert_eq!(parse_bos(kExampleBosDescriptor), Some((0x42, 0x01)));
   }
+  
+  #[test]
+  fn test_parse_url_descriptor() {
+    assert_eq!(parse_webusb_url(kExampleUrlDescriptor), Some("https://example.com/index.html".to_string()));
+  }
 
   // TODO(@littledivy): Import more tests from https://source.chromium.org/chromium/chromium/src/+/main:services/device/usb/webusb_descriptors_unittest.cc
+
 }
