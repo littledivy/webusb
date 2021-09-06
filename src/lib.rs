@@ -108,7 +108,7 @@ pub enum UsbEndpointType {
   Control,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
   In,
@@ -298,7 +298,6 @@ impl UsbDevice {
     // 5.
     match self.device_handle {
       Some(ref mut handle_ref) => {
-        // Calls `libusb_set_configuration`
         handle_ref.claim_interface(interface.interface_number)?;
       }
       None => unreachable!(),
@@ -309,6 +308,225 @@ impl UsbDevice {
 
     Ok(())
   }
+
+  pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
+    // 3.
+    let mut interface = match self.configurations.iter_mut().find_map(|c| {
+      c.interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+    }) {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 4.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 5.
+    if !interface.claimed {
+      return Ok(());
+    }
+
+    // 5.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        handle_ref.release_interface(interface.interface_number)?;
+      }
+      None => unreachable!(),
+    };
+
+    // 6.
+    interface.claimed = false;
+
+    Ok(())
+  }
+
+  pub fn select_alternate_interface(
+    &mut self,
+    interface_number: u8,
+    alternate_setting: u8,
+  ) -> Result<()> {
+    // 3.
+    let mut interface = match self.configurations.iter_mut().find_map(|c| {
+      c.interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+    }) {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 4.
+    if !self.opened || !interface.claimed {
+      return Err(Error::InvalidState);
+    }
+
+    // 5-6.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        handle_ref.set_alternate_setting(
+          interface.interface_number,
+          alternate_setting,
+        )?;
+      }
+      None => unreachable!(),
+    };
+
+    // 7.
+    return Ok(());
+  }
+
+  pub fn control_transfer_in(
+    &mut self,
+    setup: USBControlTransferParameters,
+    length: usize,
+  ) -> Result<Vec<u8>> {
+    // 3.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 4.
+    self.validate_control_setup(&setup)?;
+
+    // 5.
+    let mut buffer = vec![0u8; length];
+
+    // 6-7.
+    let bytes_transferred = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let req = match setup.request_type {
+          USBRequestType::Standard => rusb::RequestType::Standard,
+          USBRequestType::Class => rusb::RequestType::Class,
+          USBRequestType::Vendor => rusb::RequestType::Vendor,
+        };
+
+        let recipient = match setup.recipient {
+          USBRecipient::Device => rusb::Recipient::Device,
+          USBRecipient::Interface => rusb::Recipient::Interface,
+          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
+          USBRecipient::Other => rusb::Recipient::Other,
+        };
+
+        let req_type = rusb::request_type(rusb::Direction::In, req, recipient);
+
+        handle_ref.read_control(
+          req_type,
+          setup.request,
+          setup.value,
+          setup.index,
+          &mut buffer,
+          std::time::Duration::new(0, 0),
+        )?
+      }
+      None => unreachable!(),
+    };
+
+    // 8-9.
+    // Returns the buffer containing first bytes_transferred instead of returning
+    // a USBInTransferResult.
+    let result = &buffer[0..bytes_transferred];
+
+    // 10-11. TODO: Will need to handle `read_control` Err
+
+    // 13.
+    Ok(result.to_vec())
+  }
+
+  // https://wicg.github.io/webusb/#check-the-validity-of-the-control-transfer-parameters
+  fn validate_control_setup(
+    &mut self,
+    setup: &USBControlTransferParameters,
+  ) -> Result<()> {
+    // 3.
+    if let Some(configuration) = &self.configuration {
+      match setup.recipient {
+        // 4.
+        USBRecipient::Interface => {
+          // 4.1
+          let interface_number: u8 = setup.index as u8 & 0xFF;
+
+          // 4.2
+          let interface = configuration
+            .interfaces
+            .iter()
+            .find(|itf| itf.interface_number == interface_number)
+            .ok_or(Error::NotFound)?;
+
+          // 4.3
+          if !interface.claimed {
+            return Err(Error::InvalidState);
+          }
+        }
+        // 5.
+        USBRecipient::Endpoint => {
+          // 5.1
+          let endpoint_number = setup.index as u8 & (1 << 4);
+
+          // 5.2
+          let direction = match (setup.index >> 8) & 1 {
+            1 => Direction::In,
+            _ => Direction::Out,
+          };
+
+          // 5.3-5.4
+          let interface = configuration
+            .interfaces
+            .iter()
+            .find(|itf| {
+              itf
+                .alternates
+                .iter()
+                .find(|alt| {
+                  alt
+                    .endpoints
+                    .iter()
+                    .find(|endpoint| {
+                      endpoint.endpoint_number == endpoint_number
+                        && endpoint.direction == direction
+                    })
+                    .is_some()
+                })
+                .is_some()
+            })
+            .ok_or(Error::NotFound)?;
+        }
+        _ => {}
+      }
+    }
+
+    Ok(())
+  }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "lowercase")]
+enum USBRequestType {
+  Standard,
+  Class,
+  Vendor,
+}
+
+#[derive(Serialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum USBRecipient {
+  Device,
+  Interface,
+  Endpoint,
+  Other,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct USBControlTransferParameters {
+  request_type: USBRequestType,
+  recipient: USBRecipient,
+  request: u8,
+  value: u16,
+  index: u16,
 }
 
 impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
