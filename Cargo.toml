@@ -1,9 +1,11 @@
 [package]
 name = "webusb"
+description = "WebUSB API implementation in Rust"
 version = "0.1.0"
 authors = ["Divy Srivastava <dj.srivastava23@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/littledivy/webusb"
+license = "MIT"
 
 [dependencies]
 rusb = "0.8.1"
