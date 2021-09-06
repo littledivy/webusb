@@ -436,6 +436,53 @@ impl UsbDevice {
     Ok(result.to_vec())
   }
 
+  pub fn control_transfer_out(
+    &mut self,
+    setup: USBControlTransferParameters,
+    data: &[u8],
+  ) -> Result<usize> {
+    // 2.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 3.
+    self.validate_control_setup(&setup)?;
+
+    // 4-8.
+    let bytes_written = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let req = match setup.request_type {
+          USBRequestType::Standard => rusb::RequestType::Standard,
+          USBRequestType::Class => rusb::RequestType::Class,
+          USBRequestType::Vendor => rusb::RequestType::Vendor,
+        };
+
+        let recipient = match setup.recipient {
+          USBRecipient::Device => rusb::Recipient::Device,
+          USBRecipient::Interface => rusb::Recipient::Interface,
+          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
+          USBRecipient::Other => rusb::Recipient::Other,
+        };
+
+        let req_type = rusb::request_type(rusb::Direction::Out, req, recipient);
+
+        handle_ref.write_control(
+          req_type,
+          setup.request,
+          setup.value,
+          setup.index,
+          data,
+          std::time::Duration::new(0, 0),
+        )?
+      }
+      None => unreachable!(),
+    };
+
+    // 9.
+    Ok(bytes_written)
+  }
+
   // https://wicg.github.io/webusb/#check-the-validity-of-the-control-transfer-parameters
   fn validate_control_setup(
     &mut self,
@@ -497,6 +544,88 @@ impl UsbDevice {
         _ => {}
       }
     }
+
+    Ok(())
+  }
+
+  pub fn clear_halt(
+    &mut self,
+    direction: Direction,
+    endpoint_number: u8,
+  ) -> Result<()> {
+    let active_configuration =
+      self.configuration.as_ref().ok_or(Error::NotFound)?;
+
+    // 2.
+    let interface = active_configuration
+      .interfaces
+      .iter()
+      .find(|itf| {
+        itf
+          .alternates
+          .iter()
+          .find(|alt| {
+            alt
+              .endpoints
+              .iter()
+              .find(|endpoint| {
+                endpoint.endpoint_number == endpoint_number
+                  && endpoint.direction == direction
+              })
+              .is_some()
+          })
+          .is_some()
+      })
+      .ok_or(Error::NotFound)?;
+
+    // 3.
+    if !self.opened || !interface.claimed {
+      return Err(Error::InvalidState);
+    }
+
+    // 4-5.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        const EP_DIR_IN: u8 = 0x80;
+        const EP_DIR_OUT: u8 = 0x0;
+
+        let mut endpoint = endpoint_number;
+
+        match direction {
+          Direction::In => endpoint |= EP_DIR_IN,
+          Direction::Out => endpoint |= EP_DIR_OUT,
+        };
+
+        handle_ref.clear_halt(endpoint)?
+      }
+      None => unreachable!(),
+    };
+
+    Ok(())
+  }
+
+  pub fn transfer_in(&mut self) {}
+  pub fn transfer_out(&mut self) {}
+
+  pub fn isochronous_transfer_in(&mut self) {
+    unimplemented!()
+  }
+
+  pub fn isochronous_transfer_out(&mut self) {
+    unimplemented!()
+  }
+
+  pub fn reset(&mut self) -> Result<()> {
+    // 3.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 4-6.
+    match self.device_handle {
+      Some(ref mut handle_ref) => handle_ref.reset()?,
+      None => unreachable!(),
+    };
 
     Ok(())
   }
