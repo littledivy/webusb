@@ -3,8 +3,6 @@ name: testing
 on:
   push:
     branches: [ main, trying, staging ]
-  pull_request:
-    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
