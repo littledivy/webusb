@@ -1,4 +1,4 @@
 status = [
-  "Build"
+  "testing%"
 ]
 delete_merged_branches = true
