@@ -945,6 +945,14 @@ mod tests {
     let mut device = arduino();
     device.open()?;
 
+    // Not part of public API.
+    // This is to ensure that the device is not busy.
+    device
+      .device_handle
+      .as_mut()
+      .unwrap()
+      .set_auto_detach_kernel_driver(true)?;
+
     if device.configuration.is_none() {
       device.select_configuration(1)?;
     }
