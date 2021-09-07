@@ -281,11 +281,13 @@ impl UsbDevice {
 
   pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
     // 2.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -316,11 +318,13 @@ impl UsbDevice {
 
   pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
     // 3.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -355,11 +359,13 @@ impl UsbDevice {
     alternate_setting: u8,
   ) -> Result<()> {
     // 3.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -499,7 +505,7 @@ impl UsbDevice {
         // 4.
         USBRecipient::Interface => {
           // 4.1
-          let interface_number: u8 = setup.index as u8 & 0xFF;
+          let interface_number: u8 = (setup.index & 0xFF) as u8;
 
           // 4.2
           let interface = configuration
@@ -938,11 +944,15 @@ mod tests {
   fn test_blink() -> crate::Result<()> {
     let mut device = arduino();
     device.open()?;
+
     if device.configuration.is_none() {
       device.select_configuration(1)?;
     }
-    device.claim_interface(1)?;
+
+    device.claim_interface(2)?;
+
     device.select_alternate_interface(2, 0)?;
+
     device.control_transfer_out(
       crate::USBControlTransferParameters {
         request_type: crate::USBRequestType::Class,
@@ -955,6 +965,8 @@ mod tests {
     )?;
 
     device.transfer_out(4, b"H")?;
+    device.transfer_out(4, b"L")?;
+
     device.control_transfer_out(
       crate::USBControlTransferParameters {
         request_type: crate::USBRequestType::Class,
@@ -965,7 +977,6 @@ mod tests {
       },
       &[],
     )?;
-
     device.close()?;
     Ok(())
   }
