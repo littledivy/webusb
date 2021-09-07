@@ -612,8 +612,72 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub fn transfer_in(&mut self) {
-    unimplemented!()
+  pub fn transfer_in(
+    &mut self,
+    endpoint_number: u8,
+    length: usize,
+  ) -> Result<Vec<u8>> {
+    // 3.
+    let endpoint = self
+      .configuration
+      .as_ref()
+      .ok_or(Error::NotFound)?
+      .interfaces
+      .iter()
+      .find_map(|itf| {
+        itf.alternates.iter().find_map(|alt| {
+          alt.endpoints.iter().find(|endpoint| {
+            endpoint.endpoint_number == endpoint_number
+              && endpoint.direction == Direction::In
+          })
+        })
+      })
+      .ok_or(Error::NotFound)?;
+
+    // 4.
+    match endpoint.r#type {
+      UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
+      _ => return Err(Error::InvalidAccess),
+    }
+
+    // 5.
+    // FIXME: Check if interface is claimed
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 6.
+    let mut buffer = vec![0u8; length];
+
+    // 7-8.
+    let bytes_transferred = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let endpoint_addr = EP_DIR_OUT | endpoint_number;
+
+        match endpoint.r#type {
+          UsbEndpointType::Bulk => handle_ref.read_bulk(
+            endpoint_addr,
+            &mut buffer,
+            std::time::Duration::new(0, 0),
+          )?,
+          UsbEndpointType::Interrupt => handle_ref.read_interrupt(
+            endpoint_addr,
+            &mut buffer,
+            std::time::Duration::new(0, 0),
+          )?,
+          _ => unreachable!(),
+        }
+      }
+      None => unreachable!(),
+    };
+
+    // 10.
+    let result = &buffer[0..bytes_transferred];
+
+    // 11-14. See `control_transfer_in` TODO comment
+
+    // 15.
+    Ok(result.to_vec())
   }
 
   pub fn transfer_out(
