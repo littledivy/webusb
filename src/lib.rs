@@ -922,13 +922,16 @@ mod tests {
   }
 
   #[test]
-  fn test_bos() {
+  fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let device = arduino();
+    let mut device = arduino();
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
     );
+    device.close()?;
+
+    Ok(())
   }
 
   #[test]
