@@ -604,8 +604,13 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub fn transfer_in(&mut self) {}
-  pub fn transfer_out(&mut self) {}
+  pub fn transfer_in(&mut self) {
+      unimplemented!()
+  }
+  
+  pub fn transfer_out(&mut self) {
+      unimplemented!()
+  }
 
   pub fn isochronous_transfer_in(&mut self) {
     unimplemented!()
