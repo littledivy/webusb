@@ -6,6 +6,10 @@ authors = ["Divy Srivastava <dj.srivastava23@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/littledivy/webusb"
 license = "MIT"
+keywords = [
+    "usb",
+    "webusb"
+]
 
 [dependencies]
 rusb = "0.8.1"

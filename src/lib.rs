@@ -15,11 +15,16 @@ use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
 use crate::descriptors::parse_webusb_url;
 
+const EP_DIR_IN: u8 = 0x80;
+const EP_DIR_OUT: u8 = 0x0;
+
+#[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
   Usb(rusb::Error),
   NotFound,
   InvalidState,
+  InvalidAccess,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -276,11 +281,13 @@ impl UsbDevice {
 
   pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
     // 2.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -311,11 +318,13 @@ impl UsbDevice {
 
   pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
     // 3.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -350,11 +359,13 @@ impl UsbDevice {
     alternate_setting: u8,
   ) -> Result<()> {
     // 3.
-    let mut interface = match self.configurations.iter_mut().find_map(|c| {
-      c.interfaces
-        .iter_mut()
-        .find(|i| i.interface_number == interface_number)
-    }) {
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
       Some(mut i) => i,
       None => return Err(Error::NotFound),
     };
@@ -494,7 +505,7 @@ impl UsbDevice {
         // 4.
         USBRecipient::Interface => {
           // 4.1
-          let interface_number: u8 = setup.index as u8 & 0xFF;
+          let interface_number: u8 = (setup.index & 0xFF) as u8;
 
           // 4.2
           let interface = configuration
@@ -586,9 +597,6 @@ impl UsbDevice {
     // 4-5.
     match self.device_handle {
       Some(ref mut handle_ref) => {
-        const EP_DIR_IN: u8 = 0x80;
-        const EP_DIR_OUT: u8 = 0x0;
-
         let mut endpoint = endpoint_number;
 
         match direction {
@@ -605,11 +613,66 @@ impl UsbDevice {
   }
 
   pub fn transfer_in(&mut self) {
-      unimplemented!()
+    unimplemented!()
   }
-  
-  pub fn transfer_out(&mut self) {
-      unimplemented!()
+
+  pub fn transfer_out(
+    &mut self,
+    endpoint_number: u8,
+    data: &[u8],
+  ) -> Result<usize> {
+    // 2.
+    let endpoint = self
+      .configuration
+      .as_ref()
+      .ok_or(Error::NotFound)?
+      .interfaces
+      .iter()
+      .find_map(|itf| {
+        itf.alternates.iter().find_map(|alt| {
+          alt.endpoints.iter().find(|endpoint| {
+            endpoint.endpoint_number == endpoint_number
+              && endpoint.direction == Direction::Out
+          })
+        })
+      })
+      .ok_or(Error::NotFound)?;
+
+    // 3.
+    match endpoint.r#type {
+      UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
+      _ => return Err(Error::InvalidAccess),
+    }
+
+    // 4.
+    // FIXME: Check if interface is claimed
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 5.
+    let bytes_written = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let endpoint_addr = EP_DIR_OUT | endpoint_number;
+
+        match endpoint.r#type {
+          UsbEndpointType::Bulk => handle_ref.write_bulk(
+            endpoint_addr,
+            data,
+            std::time::Duration::new(0, 0),
+          )?,
+          UsbEndpointType::Interrupt => handle_ref.write_interrupt(
+            endpoint_addr,
+            data,
+            std::time::Duration::new(0, 0),
+          )?,
+          _ => unreachable!(),
+        }
+      }
+      None => unreachable!(),
+    };
+
+    Ok(bytes_written)
   }
 
   pub fn isochronous_transfer_in(&mut self) {
@@ -838,7 +901,91 @@ impl Context {
           && d.device_descriptor().unwrap().class_code() != 9
       })
       .map(|d| UsbDevice::try_from(d))
-      .collect::<Result<Vec<UsbDevice>>>()?;
+      .filter(|d| {
+        d.is_ok()
+          || d.as_ref().err().unwrap() != &Error::Usb(rusb::Error::Access)
+      })
+      .map(|d| d.unwrap())
+      .collect::<Vec<UsbDevice>>();
     Ok(usb_devices)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  // These tests depends on real hardware.
+  // TODO(@littledivy): Document running tests locally.
+  use crate::Context;
+  use crate::UsbDevice;
+
+  // Arduino Leonardo (2341:8036).
+  // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
+  fn arduino() -> UsbDevice {
+    let ctx = Context::new().unwrap();
+    let devices = ctx.devices().unwrap();
+    let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
+    device
+  }
+
+  #[test]
+  fn test_bos() -> crate::Result<()> {
+    // Read and Parse BOS the descriptor.
+    let mut device = arduino();
+    assert_eq!(
+      device.url,
+      Some("https://webusb.github.io/arduino/demos/console".to_string())
+    );
+    device.close()?;
+
+    Ok(())
+  }
+
+  #[test]
+  fn test_blink() -> crate::Result<()> {
+    let mut device = arduino();
+    device.open()?;
+
+    // Not part of public API.
+    // This is to ensure that the device is not busy.
+    device
+      .device_handle
+      .as_mut()
+      .unwrap()
+      .set_auto_detach_kernel_driver(true)?;
+
+    if device.configuration.is_none() {
+      device.select_configuration(1)?;
+    }
+
+    device.claim_interface(2)?;
+
+    device.select_alternate_interface(2, 0)?;
+
+    device.control_transfer_out(
+      crate::USBControlTransferParameters {
+        request_type: crate::USBRequestType::Class,
+        recipient: crate::USBRecipient::Interface,
+        request: 0x22,
+        value: 0x01,
+        index: 2,
+      },
+      &[],
+    )?;
+
+    device.transfer_out(4, b"H")?;
+    device.transfer_out(4, b"L")?;
+
+    device.control_transfer_out(
+      crate::USBControlTransferParameters {
+        request_type: crate::USBRequestType::Class,
+        recipient: crate::USBRecipient::Interface,
+        request: 0x22,
+        value: 0x00,
+        index: 2,
+      },
+      &[],
+    )?;
+    device.close()?;
+    Ok(())
   }
 }
