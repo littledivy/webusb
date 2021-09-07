@@ -1,4 +1,4 @@
 status = [
-  "testing%"
+  "test-bors"
 ]
 delete_merged_branches = true
