@@ -652,7 +652,7 @@ impl UsbDevice {
     // 7-8.
     let bytes_transferred = match self.device_handle {
       Some(ref mut handle_ref) => {
-        let endpoint_addr = EP_DIR_OUT | endpoint_number;
+        let endpoint_addr = EP_DIR_IN | endpoint_number;
 
         match endpoint.r#type {
           UsbEndpointType::Bulk => handle_ref.read_bulk(
@@ -984,72 +984,100 @@ mod tests {
 
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
-  fn arduino() -> UsbDevice {
-    let ctx = Context::new().unwrap();
-    let devices = ctx.devices().unwrap();
-    let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
-    device
+  struct TestDevice(UsbDevice);
+
+  impl TestDevice {
+    pub fn new() -> Self {
+      let ctx = Context::new().unwrap();
+      let devices = ctx.devices().unwrap();
+      let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
+      Self(device)
+    }
+
+    pub fn init(&mut self) -> crate::Result<()> {
+      let mut device = &mut self.0;
+      device.open()?;
+
+      // Not part of public API.
+      // This is to ensure that the device is not busy.
+      device
+        .device_handle
+        .as_mut()
+        .unwrap()
+        .set_auto_detach_kernel_driver(true)?;
+
+      if device.configuration.is_none() {
+        device.select_configuration(1)?;
+      }
+
+      device.claim_interface(2)?;
+
+      device.select_alternate_interface(2, 0)?;
+
+      device.control_transfer_out(
+        crate::USBControlTransferParameters {
+          request_type: crate::USBRequestType::Class,
+          recipient: crate::USBRecipient::Interface,
+          request: 0x22,
+          value: 0x01,
+          index: 2,
+        },
+        &[],
+      )?;
+
+      Ok(())
+    }
+
+    pub fn deinit(&mut self) -> crate::Result<()> {
+      self.0.control_transfer_out(
+        crate::USBControlTransferParameters {
+          request_type: crate::USBRequestType::Class,
+          recipient: crate::USBRecipient::Interface,
+          request: 0x22,
+          value: 0x00,
+          index: 2,
+        },
+        &[],
+      )?;
+      self.0.close()?;
+      Ok(())
+    }
+
+    pub fn device(&mut self) -> &mut UsbDevice {
+      &mut self.0
+    }
+  }
+
+  impl Drop for TestDevice {
+    fn drop(&mut self) {
+      self.0.close().unwrap();
+    }
   }
 
   #[test]
   fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let mut device = arduino();
+    let mut test_device = TestDevice::new();
+
+    let mut device = test_device.device();
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
     );
-    device.close()?;
 
     Ok(())
   }
 
   #[test]
-  fn test_blink() -> crate::Result<()> {
-    let mut device = arduino();
-    device.open()?;
+  fn test_device_blink() -> crate::Result<()> {
+    let mut test_device = TestDevice::new();
+    test_device.init()?;
 
-    // Not part of public API.
-    // This is to ensure that the device is not busy.
-    device
-      .device_handle
-      .as_mut()
-      .unwrap()
-      .set_auto_detach_kernel_driver(true)?;
-
-    if device.configuration.is_none() {
-      device.select_configuration(1)?;
-    }
-
-    device.claim_interface(2)?;
-
-    device.select_alternate_interface(2, 0)?;
-
-    device.control_transfer_out(
-      crate::USBControlTransferParameters {
-        request_type: crate::USBRequestType::Class,
-        recipient: crate::USBRecipient::Interface,
-        request: 0x22,
-        value: 0x01,
-        index: 2,
-      },
-      &[],
-    )?;
-
+    let mut device = test_device.device();
     device.transfer_out(4, b"H")?;
     device.transfer_out(4, b"L")?;
 
-    device.control_transfer_out(
-      crate::USBControlTransferParameters {
-        request_type: crate::USBRequestType::Class,
-        recipient: crate::USBRecipient::Interface,
-        request: 0x22,
-        value: 0x00,
-        index: 2,
-      },
-      &[],
-    )?;
-    device.close()?;
+    test_device.deinit()?;
     Ok(())
   }
 }
