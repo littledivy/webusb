@@ -8,7 +8,7 @@ Rust.
 
 ```toml
 [dependencies]
-webusb = "0.1.1"
+webusb = "0.1.2"
 ```
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X4Y6IZ)
