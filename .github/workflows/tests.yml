@@ -13,8 +13,8 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      CARGO_INCREMENTAL: 0
-      RUSTFLAGS: -Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort
+      RUSTFLAGS: -Zinstrument-coverage
+      LLVM_PROFILE_FILE: "webusb-%p-%m.profraw"
 
     steps:
     - uses: actions/checkout@v2
