@@ -11,6 +11,10 @@ jobs:
   build:
     name: test-bors
     runs-on: [self-hosted, linux, x64]
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      RUSTFLAGS: -Zinstrument-coverage
+      LLVM_PROFILE_FILE: webusb-%p-%m.profraw
 
     steps:
     - uses: actions/checkout@v2
@@ -18,3 +22,9 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Generate coverage
+      run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing -o ./lcov.info
+    - uses: codecov/codecov-action@v2
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./lcov.info
