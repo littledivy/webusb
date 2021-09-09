@@ -5,6 +5,7 @@ Rust.
 
 [![Documentation](https://docs.rs/webusb/badge.svg)](https://docs.rs/webusb)
 [![Package](https://img.shields.io/crates/v/webusb.svg)](https://crates.io/crates/webusb)
+[![Coverage Status](https://coveralls.io/repos/github/littledivy/webusb/badge.svg)](https://coveralls.io/github/littledivy/webusb)
 
 ```toml
 [dependencies]
