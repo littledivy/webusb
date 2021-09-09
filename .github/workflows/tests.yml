@@ -23,7 +23,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Generate coverage
-      run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing -o ./lcov.info
+      run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" -o ./lcov.info
     - name: Coveralls
       uses: coverallsapp/github-action@master
       with:
