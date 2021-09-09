@@ -252,9 +252,9 @@ impl UsbDevice {
     let configuration = match self
       .configurations
       .iter()
-      .find(|c| c.configuration_value == configuration_value)
+      .position(|c| c.configuration_value == configuration_value)
     {
-      Some(_) => self.device.config_descriptor(configuration_value)?,
+      Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
       None => return Err(Error::NotFound),
     };
 
@@ -1039,6 +1039,7 @@ mod tests {
         },
         &[],
       )?;
+      self.0.release_interface(2)?;
       self.0.close()?;
       Ok(())
     }
