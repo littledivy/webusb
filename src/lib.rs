@@ -1006,8 +1006,11 @@ mod tests {
         .unwrap()
         .set_auto_detach_kernel_driver(true)?;
 
-      if device.configuration.is_none() {
-        device.select_configuration(1)?;
+      // A real world application should use `device.configuration.is_none()`.
+      match device.select_configuration(1) {
+        Ok(_) => {}, // Unreachable in the test runner
+        Err(crate::Error::Usb(rusb::Error::Busy)) => {}
+        _ => unreachable!(),
       }
 
       device.claim_interface(2)?;
