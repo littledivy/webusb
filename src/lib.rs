@@ -924,26 +924,6 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
   }
 }
 
-/// Method to determine the transfer type from the device's
-/// configuration descriptor and an endpoint address.
-pub fn transfer_type(
-  cnf: rusb::ConfigDescriptor,
-  addr: u8,
-) -> Option<rusb::TransferType> {
-  let interfaces = cnf.interfaces();
-  for interface in interfaces {
-    for descriptor in interface.descriptors() {
-      let endpoint_desc = descriptor
-        .endpoint_descriptors()
-        .find(|s| s.address() == addr);
-      if let Some(endpoint_desc) = endpoint_desc {
-        return Some(endpoint_desc.transfer_type());
-      }
-    }
-  }
-  None
-}
-
 /// A WebUSB Context. Provides APIs for device enumaration.
 pub struct Context(rusb::Context);
 
@@ -980,90 +960,82 @@ mod tests {
   // These tests depends on real hardware.
   // TODO(@littledivy): Document running tests locally.
   use crate::Context;
+  use crate::Direction;
+  use crate::Error;
   use crate::UsbDevice;
+
+  use std::thread;
 
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
-  struct TestDevice(UsbDevice);
-
-  impl TestDevice {
-    pub fn new() -> Self {
-      let ctx = Context::new().unwrap();
-      let devices = ctx.devices().unwrap();
-      let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
-      Self(device)
-    }
-
-    pub fn init(&mut self) -> crate::Result<()> {
-      let mut device = &mut self.0;
-      device.open()?;
-
-      // Not part of public API.
-      // This is to ensure that the device is not busy.
-      device
-        .device_handle
-        .as_mut()
-        .unwrap()
-        .set_auto_detach_kernel_driver(true)?;
-
-      // A real world application should use `device.configuration.is_none()`.
-      match device.select_configuration(1) {
-        Ok(_) => {}, // Unreachable in the test runner
-        Err(crate::Error::Usb(rusb::Error::Busy)) => {}
-        _ => unreachable!(),
-      }
-
-      device.claim_interface(2)?;
-
-      device.select_alternate_interface(2, 0)?;
-
-      device.control_transfer_out(
-        crate::USBControlTransferParameters {
-          request_type: crate::USBRequestType::Class,
-          recipient: crate::USBRecipient::Interface,
-          request: 0x22,
-          value: 0x01,
-          index: 2,
-        },
-        &[],
-      )?;
-
-      Ok(())
-    }
-
-    pub fn deinit(&mut self) -> crate::Result<()> {
-      self.0.control_transfer_out(
-        crate::USBControlTransferParameters {
-          request_type: crate::USBRequestType::Class,
-          recipient: crate::USBRecipient::Interface,
-          request: 0x22,
-          value: 0x00,
-          index: 2,
-        },
-        &[],
-      )?;
-      self.0.release_interface(2)?;
-      self.0.close()?;
-      Ok(())
-    }
-
-    pub fn device(&mut self) -> &mut UsbDevice {
-      &mut self.0
-    }
+  fn test_device() -> UsbDevice {
+    let ctx = Context::new().unwrap();
+    let devices = ctx.devices().unwrap();
+    let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
+    device
   }
 
-  impl Drop for TestDevice {
-    fn drop(&mut self) {
-      self.0.close().unwrap();
+  fn arduino(
+    test_fn: fn(_: &mut UsbDevice) -> crate::Result<()>,
+  ) -> crate::Result<()> {
+    let mut device = test_device();
+
+    device.open()?;
+
+    // Not part of public API.
+    // This is to ensure that the device is not busy.
+    device
+      .device_handle
+      .as_mut()
+      .unwrap()
+      .set_auto_detach_kernel_driver(true)?;
+
+    // A real world application should use `device.configuration.is_none()`.
+    match device.select_configuration(1) {
+      Ok(_) => {} // Unreachable in the test runner
+      Err(crate::Error::Usb(rusb::Error::Busy))
+      | Err(crate::Error::InvalidState) => {}
+      _ => unreachable!(),
     }
+
+    device.claim_interface(2)?;
+
+    device.select_alternate_interface(2, 0)?;
+
+    device.control_transfer_out(
+      crate::USBControlTransferParameters {
+        request_type: crate::USBRequestType::Class,
+        recipient: crate::USBRecipient::Interface,
+        request: 0x22,
+        value: 0x01,
+        index: 2,
+      },
+      &[],
+    )?;
+
+    test_fn(&mut device)?;
+
+    device.control_transfer_out(
+      crate::USBControlTransferParameters {
+        request_type: crate::USBRequestType::Class,
+        recipient: crate::USBRecipient::Interface,
+        request: 0x22,
+        value: 0x00,
+        index: 2,
+      },
+      &[],
+    )?;
+    device.release_interface(2)?;
+    device.reset()?;
+    device.close()?;
+
+    Ok(())
   }
 
   #[test]
   fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let mut test_device = TestDevice::new();
-
-    let mut device = test_device.device();
+    let mut device = test_device();
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
@@ -1073,15 +1045,110 @@ mod tests {
   }
 
   #[test]
-  fn test_device_blink() -> crate::Result<()> {
-    let mut test_device = TestDevice::new();
-    test_device.init()?;
+  fn test_device_initial_state() -> crate::Result<()> {
+    let mut device = test_device();
 
-    let mut device = test_device.device();
-    device.transfer_out(4, b"H")?;
-    device.transfer_out(4, b"L")?;
+    device.open()?;
+    device.open()?;
 
-    test_device.deinit()?;
+    device.close()?;
+    device.close()?;
     Ok(())
+  }
+
+  #[test]
+  fn test_device_invalid_state() -> crate::Result<()> {
+    let mut device = test_device();
+
+    // Without open() should panic.
+    device.select_configuration(1).unwrap_err();
+    device.claim_interface(2).unwrap_err();
+
+    device.select_alternate_interface(2, 0).unwrap_err();
+
+    device
+      .control_transfer_out(
+        crate::USBControlTransferParameters {
+          request_type: crate::USBRequestType::Class,
+          recipient: crate::USBRecipient::Interface,
+          request: 0x22,
+          value: 0x01,
+          index: 2,
+        },
+        &[],
+      )
+      .unwrap_err();
+
+    device.transfer_out(4, b"H").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
+    device.transfer_out(4, b"L").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
+
+    device
+      .control_transfer_out(
+        crate::USBControlTransferParameters {
+          request_type: crate::USBRequestType::Class,
+          recipient: crate::USBRecipient::Interface,
+          request: 0x22,
+          value: 0x00,
+          index: 2,
+        },
+        &[],
+      )
+      .unwrap_err();
+    device.release_interface(2).unwrap_err();
+    device.reset().unwrap_err();
+    device.close()?;
+    Ok(())
+  }
+
+  #[test]
+  fn test_device_blink() -> crate::Result<()> {
+    arduino(|device| {
+      device.transfer_out(4, b"H")?;
+      device.clear_halt(Direction::Out, 4)?;
+
+      device.transfer_out(4, b"L")?;
+      device.clear_halt(Direction::Out, 4)?;
+
+      Ok(())
+    })
+  }
+
+  #[test]
+  // IMPORTANT! These are meant to fail when the methods are implemented.
+  fn test_unimplemented() {
+    let mut device = test_device();
+
+    let result =
+      std::panic::catch_unwind(move || device.isochronous_transfer_in());
+    assert!(result.is_err());
+
+    let mut device = test_device();
+
+    let result =
+      std::panic::catch_unwind(move || device.isochronous_transfer_out());
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn test_device_not_found() -> crate::Result<()> {
+    let mut device = test_device();
+
+    device.open()?;
+
+    device.select_configuration(255).unwrap_err();
+    device.claim_interface(255).unwrap_err();
+    device.release_interface(255).unwrap_err();
+    device.select_alternate_interface(255, 0).unwrap_err();
+
+    device.close()?;
+    Ok(())
+  }
+
+  #[test]
+  fn test_error_impl() {
+    let nope: Option<()> = None;
+    assert_eq!(Error::from(nope), Error::NotFound);
   }
 }
