@@ -1116,6 +1116,74 @@ mod tests {
   }
 
   #[test]
+  fn test_device_control() -> crate::Result<()> {
+    arduino(|device| {
+      let device_descriptor_bytes = device.control_transfer_in(
+        crate::USBControlTransferParameters {
+          request_type: crate::USBRequestType::Standard,
+          recipient: crate::USBRecipient::Device,
+          // kGetDescriptorRequest
+          request: 0x06,
+          // kDeviceDescriptorType
+          value: 0x01 << 8,
+          index: 0,
+        },
+        // kDeviceDescriptorLength
+        18,
+      )?;
+
+      assert_eq!(device_descriptor_bytes.len(), 18);
+      assert_eq!(device_descriptor_bytes[0], 18);
+
+      let bcd_usb = u16::from_le_bytes([
+        device_descriptor_bytes[2],
+        device_descriptor_bytes[3],
+      ]);
+
+      assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
+      assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
+      assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
+
+      assert_eq!(device_descriptor_bytes[4], device.device_class);
+      assert_eq!(device_descriptor_bytes[5], device.device_subclass);
+      assert_eq!(device_descriptor_bytes[6], device.device_protocol);
+
+      let vendor_id = u16::from_le_bytes([
+        device_descriptor_bytes[8],
+        device_descriptor_bytes[9],
+      ]);
+
+      assert_eq!(vendor_id, device.vendor_id);
+
+      let product_id = u16::from_le_bytes([
+        device_descriptor_bytes[10],
+        device_descriptor_bytes[11],
+      ]);
+
+      assert_eq!(product_id, device.product_id);
+
+      let bcd_device = u16::from_le_bytes([
+        device_descriptor_bytes[12],
+        device_descriptor_bytes[13],
+      ]);
+
+      assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
+      assert_eq!(
+        ((bcd_device & 0xf0) >> 4) as u8,
+        device.device_version_minor
+      );
+      assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
+
+      assert_eq!(
+        device_descriptor_bytes[17],
+        device.configurations.len() as u8
+      );
+
+      Ok(())
+    })
+  }
+
+  #[test]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   fn test_unimplemented() {
     let mut device = test_device();
