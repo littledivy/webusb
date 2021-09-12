@@ -964,6 +964,9 @@ mod tests {
   use crate::Error;
   use crate::UsbDevice;
 
+  use std::sync::mpsc::channel;
+  use std::sync::Arc;
+  use std::sync::Mutex;
   use std::thread;
 
   // Arduino Leonardo (2341:8036).
@@ -976,7 +979,7 @@ mod tests {
   }
 
   fn arduino(
-    test_fn: fn(_: &mut UsbDevice) -> crate::Result<()>,
+    test_fn: fn(&mut UsbDevice) -> crate::Result<()>,
   ) -> crate::Result<()> {
     let mut device = test_device();
 
@@ -1110,6 +1113,24 @@ mod tests {
 
       device.transfer_out(4, b"L")?;
       device.clear_halt(Direction::Out, 4)?;
+
+      let recv = device.transfer_in(5, 64)?;
+      let mut first_run = false;
+
+      match recv.as_slice() {
+        b"Sketch begins.\r\n> " => {
+          first_run = true;
+        }
+        b"H\r\nTurning LED on.\r\n> " => {}
+        _ => unreachable!(),
+      };
+      let recv = device.transfer_in(5, 64)?;
+
+      match (first_run, recv.as_slice()) {
+        (true, b"H\r\nTurning LED on.\r\n> ")
+        | (false, b"L\r\nTurning LED off.\r\n> ") => {}
+        _ => unreachable!(),
+      };
 
       Ok(())
     })
