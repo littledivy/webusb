@@ -46,11 +46,13 @@ pub trait WebUsbDevice {
 
 /// Describes a USB backend. This lets target native, WASM and even *nothing*
 pub trait Backend {
+  type Device;
+
   /// Initializes the backend.
   fn init() -> Result<Self>
   where
     Self: Sized;
 
   /// List all devices.
-  fn devices<C: WebUsbDevice>(&self) -> Result<C>;
+  fn devices(&self) -> Result<Vec<Self::Device>>;
 }

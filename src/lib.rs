@@ -1,16 +1,19 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+#[cfg(feature = "libusb")]
 use rusb::UsbContext;
 
 use core::convert::TryFrom;
 
+#[cfg(feature = "libusb")]
 pub use rusb;
 
 mod backend;
 pub mod constants;
 mod descriptors;
 
+use crate::backend::Backend;
 use crate::backend::WebUsbDevice;
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
@@ -23,6 +26,7 @@ const EP_DIR_OUT: u8 = 0x0;
 #[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Error {
+  #[cfg(feature = "libusb")]
   Usb(rusb::Error),
   NotFound,
   InvalidState,
@@ -31,6 +35,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(feature = "libusb")]
 impl From<rusb::Error> for Error {
   fn from(err: rusb::Error) -> Self {
     Self::Usb(err)
@@ -54,6 +59,7 @@ pub struct UsbConfiguration {
   interfaces: Vec<UsbInterface>,
 }
 
+#[cfg(feature = "libusb")]
 impl UsbConfiguration {
   pub fn from(
     config_descriptor: rusb::ConfigDescriptor,
@@ -82,6 +88,7 @@ pub struct UsbInterface {
   claimed: bool,
 }
 
+#[cfg(feature = "libusb")]
 impl UsbInterface {
   pub fn from(
     i: rusb::Interface,
@@ -143,6 +150,7 @@ pub struct UsbAlternateInterface {
   endpoints: Vec<UsbEndpoint>,
 }
 
+#[cfg(feature = "libusb")]
 impl UsbAlternateInterface {
   pub fn from(
     d: rusb::InterfaceDescriptor,
@@ -274,6 +282,7 @@ impl<D, H> UsbDevice<D, H> {
   }
 }
 
+#[cfg(feature = "libusb")]
 impl WebUsbDevice
   for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
 {
@@ -785,6 +794,7 @@ pub struct USBControlTransferParameters {
   index: u16,
 }
 
+#[cfg(feature = "libusb")]
 impl TryFrom<rusb::Device<rusb::Context>>
   for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
 {
@@ -922,20 +932,25 @@ impl TryFrom<rusb::Device<rusb::Context>>
 }
 
 /// A WebUSB Context. Provides APIs for device enumaration.
+#[cfg(feature = "libusb")]
 pub struct Context(rusb::Context);
 
-type RusbDevice =
-  UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
-impl Context {
-  pub fn new() -> Result<Self> {
+#[cfg(feature = "libusb")]
+type RusbDevice = UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
+
+#[cfg(feature = "libusb")]
+impl Backend for Context {
+  type Device = RusbDevice;
+
+  fn init() -> Result<Self> {
     let ctx = rusb::Context::new()?;
     Ok(Self(ctx))
   }
 
-  pub fn devices(&self) -> Result<Vec<RusbDevice>> {
+  fn devices(&self) -> Result<Vec<Self::Device>> {
     let devices = self.0.devices()?;
 
-    let usb_devices: Vec<RusbDevice> = devices
+    let usb_devices: Vec<Self::Device> = devices
       .iter()
       .filter(|d| {
         // Do not list hubs.
@@ -943,13 +958,13 @@ impl Context {
         d.device_descriptor().is_ok()
           && d.device_descriptor().unwrap().class_code() != 9
       })
-      .map(|d| RusbDevice::try_from(d))
+      .map(|d| Self::Device::try_from(d))
       .filter(|d| {
         d.is_ok()
           || d.as_ref().err().unwrap() != &Error::Usb(rusb::Error::Access)
       })
       .map(|d| d.unwrap())
-      .collect::<Vec<RusbDevice>>();
+      .collect::<Vec<Self::Device>>();
     Ok(usb_devices)
   }
 }
