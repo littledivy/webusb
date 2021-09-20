@@ -7,9 +7,11 @@ use core::convert::TryFrom;
 
 pub use rusb;
 
+mod backend;
 pub mod constants;
 mod descriptors;
 
+use crate::backend::WebUsbDevice;
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
@@ -178,7 +180,7 @@ impl UsbAlternateInterface {
 /// Represents a WebUSB UsbDevice.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UsbDevice {
+pub struct UsbDevice<D, H> {
   pub configurations: Vec<UsbConfiguration>,
   pub configuration: Option<UsbConfiguration>,
   pub device_class: u8,
@@ -200,300 +202,12 @@ pub struct UsbDevice {
   #[serde(skip)]
   pub url: Option<String>,
   #[serde(skip)]
-  device: rusb::Device<rusb::Context>,
+  device: D,
   #[serde(skip)]
-  device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
+  device_handle: Option<H>,
 }
 
-impl UsbDevice {
-  pub fn open(&mut self) -> Result<()> {
-    // 3. device is already open?
-    if self.opened {
-      return Ok(());
-    }
-
-    // 4.
-    let handle = self.device.open()?;
-    self.device_handle = Some(handle);
-
-    // 5.
-    self.opened = true;
-    Ok(())
-  }
-
-  pub fn close(&mut self) -> Result<()> {
-    // 3. device is already closed?
-    if !self.opened {
-      return Ok(());
-    }
-
-    match &self.device_handle {
-      Some(handle_ref) => {
-        // 5-6.
-        // release claimed interfaces, close device and release handle
-        drop(handle_ref);
-      }
-      None => unreachable!(),
-    };
-
-    self.device_handle = None;
-
-    // 7.
-    self.opened = false;
-    Ok(())
-  }
-
-  /// `configuration_value` is the bConfigurationValue of the device configuration.
-  pub fn select_configuration(
-    &mut self,
-    configuration_value: u8,
-  ) -> Result<()> {
-    // 3.
-    let configuration = match self
-      .configurations
-      .iter()
-      .position(|c| c.configuration_value == configuration_value)
-    {
-      Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 5-6.
-    let handle = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        // Calls `libusb_set_configuration`
-        handle_ref.set_active_configuration(configuration_value)?;
-        handle_ref
-      }
-      None => unreachable!(),
-    };
-
-    // 7.
-    self.configuration = Some(UsbConfiguration::from(configuration, &handle)?);
-
-    Ok(())
-  }
-
-  pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
-    // 2.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
-    {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 3.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 4.
-    if interface.claimed {
-      return Ok(());
-    }
-
-    // 5.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.claim_interface(interface.interface_number)?;
-      }
-      None => unreachable!(),
-    };
-
-    // 6.
-    interface.claimed = true;
-
-    Ok(())
-  }
-
-  pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
-    // 3.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
-    {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 5.
-    if !interface.claimed {
-      return Ok(());
-    }
-
-    // 5.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.release_interface(interface.interface_number)?;
-      }
-      None => unreachable!(),
-    };
-
-    // 6.
-    interface.claimed = false;
-
-    Ok(())
-  }
-
-  pub fn select_alternate_interface(
-    &mut self,
-    interface_number: u8,
-    alternate_setting: u8,
-  ) -> Result<()> {
-    // 3.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
-    {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened || !interface.claimed {
-      return Err(Error::InvalidState);
-    }
-
-    // 5-6.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.set_alternate_setting(
-          interface.interface_number,
-          alternate_setting,
-        )?;
-      }
-      None => unreachable!(),
-    };
-
-    // 7.
-    return Ok(());
-  }
-
-  pub fn control_transfer_in(
-    &mut self,
-    setup: USBControlTransferParameters,
-    length: usize,
-  ) -> Result<Vec<u8>> {
-    // 3.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 4.
-    self.validate_control_setup(&setup)?;
-
-    // 5.
-    let mut buffer = vec![0u8; length];
-
-    // 6-7.
-    let bytes_transferred = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let req = match setup.request_type {
-          USBRequestType::Standard => rusb::RequestType::Standard,
-          USBRequestType::Class => rusb::RequestType::Class,
-          USBRequestType::Vendor => rusb::RequestType::Vendor,
-        };
-
-        let recipient = match setup.recipient {
-          USBRecipient::Device => rusb::Recipient::Device,
-          USBRecipient::Interface => rusb::Recipient::Interface,
-          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
-          USBRecipient::Other => rusb::Recipient::Other,
-        };
-
-        let req_type = rusb::request_type(rusb::Direction::In, req, recipient);
-
-        handle_ref.read_control(
-          req_type,
-          setup.request,
-          setup.value,
-          setup.index,
-          &mut buffer,
-          std::time::Duration::new(0, 0),
-        )?
-      }
-      None => unreachable!(),
-    };
-
-    // 8-9.
-    // Returns the buffer containing first bytes_transferred instead of returning
-    // a USBInTransferResult.
-    let result = &buffer[0..bytes_transferred];
-
-    // 10-11. TODO: Will need to handle `read_control` Err
-
-    // 13.
-    Ok(result.to_vec())
-  }
-
-  pub fn control_transfer_out(
-    &mut self,
-    setup: USBControlTransferParameters,
-    data: &[u8],
-  ) -> Result<usize> {
-    // 2.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 3.
-    self.validate_control_setup(&setup)?;
-
-    // 4-8.
-    let bytes_written = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let req = match setup.request_type {
-          USBRequestType::Standard => rusb::RequestType::Standard,
-          USBRequestType::Class => rusb::RequestType::Class,
-          USBRequestType::Vendor => rusb::RequestType::Vendor,
-        };
-
-        let recipient = match setup.recipient {
-          USBRecipient::Device => rusb::Recipient::Device,
-          USBRecipient::Interface => rusb::Recipient::Interface,
-          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
-          USBRecipient::Other => rusb::Recipient::Other,
-        };
-
-        let req_type = rusb::request_type(rusb::Direction::Out, req, recipient);
-
-        handle_ref.write_control(
-          req_type,
-          setup.request,
-          setup.value,
-          setup.index,
-          data,
-          std::time::Duration::new(0, 0),
-        )?
-      }
-      None => unreachable!(),
-    };
-
-    // 9.
-    Ok(bytes_written)
-  }
-
+impl<D, H> UsbDevice<D, H> {
   // https://wicg.github.io/webusb/#check-the-validity-of-the-control-transfer-parameters
   fn validate_control_setup(
     &mut self,
@@ -558,8 +272,297 @@ impl UsbDevice {
 
     Ok(())
   }
+}
 
-  pub fn clear_halt(
+impl WebUsbDevice
+  for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
+{
+  fn open(&mut self) -> Result<()> {
+    // 3. device is already open?
+    if self.opened {
+      return Ok(());
+    }
+
+    // 4.
+    let handle = self.device.open()?;
+    self.device_handle = Some(handle);
+
+    // 5.
+    self.opened = true;
+    Ok(())
+  }
+
+  fn close(&mut self) -> Result<()> {
+    // 3. device is already closed?
+    if !self.opened {
+      return Ok(());
+    }
+
+    match &self.device_handle {
+      Some(handle_ref) => {
+        // 5-6.
+        // release claimed interfaces, close device and release handle
+        drop(handle_ref);
+      }
+      None => unreachable!(),
+    };
+
+    self.device_handle = None;
+
+    // 7.
+    self.opened = false;
+    Ok(())
+  }
+
+  /// `configuration_value` is the bConfigurationValue of the device configuration.
+  fn select_configuration(&mut self, configuration_value: u8) -> Result<()> {
+    // 3.
+    let configuration = match self
+      .configurations
+      .iter()
+      .position(|c| c.configuration_value == configuration_value)
+    {
+      Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
+      None => return Err(Error::NotFound),
+    };
+
+    // 4.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 5-6.
+    let handle = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        // Calls `libusb_set_configuration`
+        handle_ref.set_active_configuration(configuration_value)?;
+        handle_ref
+      }
+      None => unreachable!(),
+    };
+
+    // 7.
+    self.configuration = Some(UsbConfiguration::from(configuration, &handle)?);
+
+    Ok(())
+  }
+
+  fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
+    // 2.
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 3.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 4.
+    if interface.claimed {
+      return Ok(());
+    }
+
+    // 5.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        handle_ref.claim_interface(interface.interface_number)?;
+      }
+      None => unreachable!(),
+    };
+
+    // 6.
+    interface.claimed = true;
+
+    Ok(())
+  }
+
+  fn release_interface(&mut self, interface_number: u8) -> Result<()> {
+    // 3.
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 4.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 5.
+    if !interface.claimed {
+      return Ok(());
+    }
+
+    // 5.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        handle_ref.release_interface(interface.interface_number)?;
+      }
+      None => unreachable!(),
+    };
+
+    // 6.
+    interface.claimed = false;
+
+    Ok(())
+  }
+
+  fn select_alternate_interface(
+    &mut self,
+    interface_number: u8,
+    alternate_setting: u8,
+  ) -> Result<()> {
+    // 3.
+    let mut active_configuration =
+      self.configuration.as_mut().ok_or(Error::NotFound)?;
+    let mut interface = match active_configuration
+      .interfaces
+      .iter_mut()
+      .find(|i| i.interface_number == interface_number)
+    {
+      Some(mut i) => i,
+      None => return Err(Error::NotFound),
+    };
+
+    // 4.
+    if !self.opened || !interface.claimed {
+      return Err(Error::InvalidState);
+    }
+
+    // 5-6.
+    match self.device_handle {
+      Some(ref mut handle_ref) => {
+        handle_ref.set_alternate_setting(
+          interface.interface_number,
+          alternate_setting,
+        )?;
+      }
+      None => unreachable!(),
+    };
+
+    // 7.
+    return Ok(());
+  }
+
+  fn control_transfer_in(
+    &mut self,
+    setup: USBControlTransferParameters,
+    length: usize,
+  ) -> Result<Vec<u8>> {
+    // 3.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 4.
+    self.validate_control_setup(&setup)?;
+
+    // 5.
+    let mut buffer = vec![0u8; length];
+
+    // 6-7.
+    let bytes_transferred = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let req = match setup.request_type {
+          USBRequestType::Standard => rusb::RequestType::Standard,
+          USBRequestType::Class => rusb::RequestType::Class,
+          USBRequestType::Vendor => rusb::RequestType::Vendor,
+        };
+
+        let recipient = match setup.recipient {
+          USBRecipient::Device => rusb::Recipient::Device,
+          USBRecipient::Interface => rusb::Recipient::Interface,
+          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
+          USBRecipient::Other => rusb::Recipient::Other,
+        };
+
+        let req_type = rusb::request_type(rusb::Direction::In, req, recipient);
+
+        handle_ref.read_control(
+          req_type,
+          setup.request,
+          setup.value,
+          setup.index,
+          &mut buffer,
+          std::time::Duration::new(0, 0),
+        )?
+      }
+      None => unreachable!(),
+    };
+
+    // 8-9.
+    // Returns the buffer containing first bytes_transferred instead of returning
+    // a USBInTransferResult.
+    let result = &buffer[0..bytes_transferred];
+
+    // 10-11. TODO: Will need to handle `read_control` Err
+
+    // 13.
+    Ok(result.to_vec())
+  }
+
+  fn control_transfer_out(
+    &mut self,
+    setup: USBControlTransferParameters,
+    data: &[u8],
+  ) -> Result<usize> {
+    // 2.
+    if !self.opened {
+      return Err(Error::InvalidState);
+    }
+
+    // 3.
+    self.validate_control_setup(&setup)?;
+
+    // 4-8.
+    let bytes_written = match self.device_handle {
+      Some(ref mut handle_ref) => {
+        let req = match setup.request_type {
+          USBRequestType::Standard => rusb::RequestType::Standard,
+          USBRequestType::Class => rusb::RequestType::Class,
+          USBRequestType::Vendor => rusb::RequestType::Vendor,
+        };
+
+        let recipient = match setup.recipient {
+          USBRecipient::Device => rusb::Recipient::Device,
+          USBRecipient::Interface => rusb::Recipient::Interface,
+          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
+          USBRecipient::Other => rusb::Recipient::Other,
+        };
+
+        let req_type = rusb::request_type(rusb::Direction::Out, req, recipient);
+
+        handle_ref.write_control(
+          req_type,
+          setup.request,
+          setup.value,
+          setup.index,
+          data,
+          std::time::Duration::new(0, 0),
+        )?
+      }
+      None => unreachable!(),
+    };
+
+    // 9.
+    Ok(bytes_written)
+  }
+
+  fn clear_halt(
     &mut self,
     direction: Direction,
     endpoint_number: u8,
@@ -612,7 +615,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub fn transfer_in(
+  fn transfer_in(
     &mut self,
     endpoint_number: u8,
     length: usize,
@@ -680,7 +683,7 @@ impl UsbDevice {
     Ok(result.to_vec())
   }
 
-  pub fn transfer_out(
+  fn transfer_out(
     &mut self,
     endpoint_number: u8,
     data: &[u8],
@@ -739,15 +742,7 @@ impl UsbDevice {
     Ok(bytes_written)
   }
 
-  pub fn isochronous_transfer_in(&mut self) {
-    unimplemented!()
-  }
-
-  pub fn isochronous_transfer_out(&mut self) {
-    unimplemented!()
-  }
-
-  pub fn reset(&mut self) -> Result<()> {
+  fn reset(&mut self) -> Result<()> {
     // 3.
     if !self.opened {
       return Err(Error::InvalidState);
@@ -790,10 +785,12 @@ pub struct USBControlTransferParameters {
   index: u16,
 }
 
-impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
+impl TryFrom<rusb::Device<rusb::Context>>
+  for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
+{
   type Error = Error;
 
-  fn try_from(device: rusb::Device<rusb::Context>) -> Result<UsbDevice> {
+  fn try_from(device: rusb::Device<rusb::Context>) -> Result<RusbDevice> {
     let device_descriptor = device.device_descriptor()?;
     let device_class = device_descriptor.class_code();
     let usb_version = device_descriptor.usb_version();
@@ -927,16 +924,18 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
 /// A WebUSB Context. Provides APIs for device enumaration.
 pub struct Context(rusb::Context);
 
+type RusbDevice =
+  UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
 impl Context {
   pub fn new() -> Result<Self> {
     let ctx = rusb::Context::new()?;
     Ok(Self(ctx))
   }
 
-  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub fn devices(&self) -> Result<Vec<RusbDevice>> {
     let devices = self.0.devices()?;
 
-    let usb_devices: Vec<UsbDevice> = devices
+    let usb_devices: Vec<RusbDevice> = devices
       .iter()
       .filter(|d| {
         // Do not list hubs.
@@ -944,13 +943,13 @@ impl Context {
         d.device_descriptor().is_ok()
           && d.device_descriptor().unwrap().class_code() != 9
       })
-      .map(|d| UsbDevice::try_from(d))
+      .map(|d| RusbDevice::try_from(d))
       .filter(|d| {
         d.is_ok()
           || d.as_ref().err().unwrap() != &Error::Usb(rusb::Error::Access)
       })
       .map(|d| d.unwrap())
-      .collect::<Vec<UsbDevice>>();
+      .collect::<Vec<RusbDevice>>();
     Ok(usb_devices)
   }
 }
