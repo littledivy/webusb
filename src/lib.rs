@@ -188,7 +188,7 @@ impl UsbAlternateInterface {
 /// Represents a WebUSB UsbDevice.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UsbDevice<D, H> {
+pub struct UsbDevice {
   pub configurations: Vec<UsbConfiguration>,
   pub configuration: Option<UsbConfiguration>,
   pub device_class: u8,
@@ -210,12 +210,14 @@ pub struct UsbDevice<D, H> {
   #[serde(skip)]
   pub url: Option<String>,
   #[serde(skip)]
-  device: D,
+  #[cfg(feature = "libusb")]
+  device: rusb::Device<rusb::Context>,
   #[serde(skip)]
-  device_handle: Option<H>,
+  #[cfg(feature = "libusb")]
+  device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
 }
 
-impl<D, H> UsbDevice<D, H> {
+impl UsbDevice {
   // https://wicg.github.io/webusb/#check-the-validity-of-the-control-transfer-parameters
   fn validate_control_setup(
     &mut self,
@@ -283,9 +285,7 @@ impl<D, H> UsbDevice<D, H> {
 }
 
 #[cfg(feature = "libusb")]
-impl WebUsbDevice
-  for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
-{
+impl WebUsbDevice for UsbDevice {
   fn open(&mut self) -> Result<()> {
     // 3. device is already open?
     if self.opened {
@@ -795,12 +795,10 @@ pub struct UsbControlTransferParameters {
 }
 
 #[cfg(feature = "libusb")]
-impl TryFrom<rusb::Device<rusb::Context>>
-  for UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>
-{
+impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
   type Error = Error;
 
-  fn try_from(device: rusb::Device<rusb::Context>) -> Result<RusbDevice> {
+  fn try_from(device: rusb::Device<rusb::Context>) -> Result<UsbDevice> {
     let device_descriptor = device.device_descriptor()?;
     let device_class = device_descriptor.class_code();
     let usb_version = device_descriptor.usb_version();
@@ -936,12 +934,8 @@ impl TryFrom<rusb::Device<rusb::Context>>
 pub struct Context(rusb::Context);
 
 #[cfg(feature = "libusb")]
-type RusbDevice =
-  UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
-
-#[cfg(feature = "libusb")]
 impl Backend for Context {
-  type Device = RusbDevice;
+  type Device = UsbDevice;
 
   fn init() -> Result<Self> {
     let ctx = rusb::Context::new()?;
@@ -974,6 +968,8 @@ impl Backend for Context {
 mod tests {
   // These tests depends on real hardware.
   // TODO(@littledivy): Document running tests locally.
+  use crate::backend::Backend;
+  use crate::backend::WebUsbDevice;
   use crate::Context;
   use crate::Direction;
   use crate::Error;
@@ -987,7 +983,7 @@ mod tests {
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
   fn test_device() -> UsbDevice {
-    let ctx = Context::new().unwrap();
+    let ctx = Context::init().unwrap();
     let devices = ctx.devices().unwrap();
     let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
     device
