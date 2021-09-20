@@ -1,6 +1,6 @@
 use crate::Direction;
 use crate::Result;
-use crate::USBControlTransferParameters;
+use crate::UsbControlTransferParameters;
 
 pub trait WebUsbDevice {
   fn open(&mut self) -> Result<()>;
@@ -15,12 +15,12 @@ pub trait WebUsbDevice {
   ) -> Result<()>;
   fn control_transfer_in(
     &mut self,
-    setup: USBControlTransferParameters,
+    setup: UsbControlTransferParameters,
     length: usize,
   ) -> Result<Vec<u8>>;
   fn control_transfer_out(
     &mut self,
-    setup: USBControlTransferParameters,
+    setup: UsbControlTransferParameters,
     data: &[u8],
   ) -> Result<usize>;
   fn clear_halt(
@@ -44,7 +44,7 @@ pub trait WebUsbDevice {
   fn reset(&mut self) -> Result<()>;
 }
 
-/// Describes a USB backend. This lets target native, WASM and even *nothing*
+/// Describes a Usb backend. This lets target native, WASM and even *nothing*
 pub trait Backend {
   type Device;
 

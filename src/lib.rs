@@ -219,13 +219,13 @@ impl<D, H> UsbDevice<D, H> {
   // https://wicg.github.io/webusb/#check-the-validity-of-the-control-transfer-parameters
   fn validate_control_setup(
     &mut self,
-    setup: &USBControlTransferParameters,
+    setup: &UsbControlTransferParameters,
   ) -> Result<()> {
     // 3.
     if let Some(configuration) = &self.configuration {
       match setup.recipient {
         // 4.
-        USBRecipient::Interface => {
+        UsbRecipient::Interface => {
           // 4.1
           let interface_number: u8 = (setup.index & 0xFF) as u8;
 
@@ -242,7 +242,7 @@ impl<D, H> UsbDevice<D, H> {
           }
         }
         // 5.
-        USBRecipient::Endpoint => {
+        UsbRecipient::Endpoint => {
           // 5.1
           let endpoint_number = setup.index as u8 & (1 << 4);
 
@@ -469,7 +469,7 @@ impl WebUsbDevice
 
   fn control_transfer_in(
     &mut self,
-    setup: USBControlTransferParameters,
+    setup: UsbControlTransferParameters,
     length: usize,
   ) -> Result<Vec<u8>> {
     // 3.
@@ -487,16 +487,16 @@ impl WebUsbDevice
     let bytes_transferred = match self.device_handle {
       Some(ref mut handle_ref) => {
         let req = match setup.request_type {
-          USBRequestType::Standard => rusb::RequestType::Standard,
-          USBRequestType::Class => rusb::RequestType::Class,
-          USBRequestType::Vendor => rusb::RequestType::Vendor,
+          UsbRequestType::Standard => rusb::RequestType::Standard,
+          UsbRequestType::Class => rusb::RequestType::Class,
+          UsbRequestType::Vendor => rusb::RequestType::Vendor,
         };
 
         let recipient = match setup.recipient {
-          USBRecipient::Device => rusb::Recipient::Device,
-          USBRecipient::Interface => rusb::Recipient::Interface,
-          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
-          USBRecipient::Other => rusb::Recipient::Other,
+          UsbRecipient::Device => rusb::Recipient::Device,
+          UsbRecipient::Interface => rusb::Recipient::Interface,
+          UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
+          UsbRecipient::Other => rusb::Recipient::Other,
         };
 
         let req_type = rusb::request_type(rusb::Direction::In, req, recipient);
@@ -515,7 +515,7 @@ impl WebUsbDevice
 
     // 8-9.
     // Returns the buffer containing first bytes_transferred instead of returning
-    // a USBInTransferResult.
+    // a UsbInTransferResult.
     let result = &buffer[0..bytes_transferred];
 
     // 10-11. TODO: Will need to handle `read_control` Err
@@ -526,7 +526,7 @@ impl WebUsbDevice
 
   fn control_transfer_out(
     &mut self,
-    setup: USBControlTransferParameters,
+    setup: UsbControlTransferParameters,
     data: &[u8],
   ) -> Result<usize> {
     // 2.
@@ -541,16 +541,16 @@ impl WebUsbDevice
     let bytes_written = match self.device_handle {
       Some(ref mut handle_ref) => {
         let req = match setup.request_type {
-          USBRequestType::Standard => rusb::RequestType::Standard,
-          USBRequestType::Class => rusb::RequestType::Class,
-          USBRequestType::Vendor => rusb::RequestType::Vendor,
+          UsbRequestType::Standard => rusb::RequestType::Standard,
+          UsbRequestType::Class => rusb::RequestType::Class,
+          UsbRequestType::Vendor => rusb::RequestType::Vendor,
         };
 
         let recipient = match setup.recipient {
-          USBRecipient::Device => rusb::Recipient::Device,
-          USBRecipient::Interface => rusb::Recipient::Interface,
-          USBRecipient::Endpoint => rusb::Recipient::Endpoint,
-          USBRecipient::Other => rusb::Recipient::Other,
+          UsbRecipient::Device => rusb::Recipient::Device,
+          UsbRecipient::Interface => rusb::Recipient::Interface,
+          UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
+          UsbRecipient::Other => rusb::Recipient::Other,
         };
 
         let req_type = rusb::request_type(rusb::Direction::Out, req, recipient);
@@ -769,7 +769,7 @@ impl WebUsbDevice
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
-enum USBRequestType {
+enum UsbRequestType {
   Standard,
   Class,
   Vendor,
@@ -777,7 +777,7 @@ enum USBRequestType {
 
 #[derive(Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum USBRecipient {
+pub enum UsbRecipient {
   Device,
   Interface,
   Endpoint,
@@ -786,9 +786,9 @@ pub enum USBRecipient {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct USBControlTransferParameters {
-  request_type: USBRequestType,
-  recipient: USBRecipient,
+pub struct UsbControlTransferParameters {
+  request_type: UsbRequestType,
+  recipient: UsbRecipient,
   request: u8,
   value: u16,
   index: u16,
@@ -936,7 +936,8 @@ impl TryFrom<rusb::Device<rusb::Context>>
 pub struct Context(rusb::Context);
 
 #[cfg(feature = "libusb")]
-type RusbDevice = UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
+type RusbDevice =
+  UsbDevice<rusb::Device<rusb::Context>, rusb::DeviceHandle<rusb::Context>>;
 
 #[cfg(feature = "libusb")]
 impl Backend for Context {
@@ -1020,9 +1021,9 @@ mod tests {
     device.select_alternate_interface(2, 0)?;
 
     device.control_transfer_out(
-      crate::USBControlTransferParameters {
-        request_type: crate::USBRequestType::Class,
-        recipient: crate::USBRecipient::Interface,
+      crate::UsbControlTransferParameters {
+        request_type: crate::UsbRequestType::Class,
+        recipient: crate::UsbRecipient::Interface,
         request: 0x22,
         value: 0x01,
         index: 2,
@@ -1033,9 +1034,9 @@ mod tests {
     test_fn(&mut device)?;
 
     device.control_transfer_out(
-      crate::USBControlTransferParameters {
-        request_type: crate::USBRequestType::Class,
-        recipient: crate::USBRecipient::Interface,
+      crate::UsbControlTransferParameters {
+        request_type: crate::UsbRequestType::Class,
+        recipient: crate::UsbRecipient::Interface,
         request: 0x22,
         value: 0x00,
         index: 2,
@@ -1085,9 +1086,9 @@ mod tests {
 
     device
       .control_transfer_out(
-        crate::USBControlTransferParameters {
-          request_type: crate::USBRequestType::Class,
-          recipient: crate::USBRecipient::Interface,
+        crate::UsbControlTransferParameters {
+          request_type: crate::UsbRequestType::Class,
+          recipient: crate::UsbRecipient::Interface,
           request: 0x22,
           value: 0x01,
           index: 2,
@@ -1103,9 +1104,9 @@ mod tests {
 
     device
       .control_transfer_out(
-        crate::USBControlTransferParameters {
-          request_type: crate::USBRequestType::Class,
-          recipient: crate::USBRecipient::Interface,
+        crate::UsbControlTransferParameters {
+          request_type: crate::UsbRequestType::Class,
+          recipient: crate::UsbRecipient::Interface,
           request: 0x22,
           value: 0x00,
           index: 2,
@@ -1154,9 +1155,9 @@ mod tests {
   fn test_device_control() -> crate::Result<()> {
     arduino(|device| {
       let device_descriptor_bytes = device.control_transfer_in(
-        crate::USBControlTransferParameters {
-          request_type: crate::USBRequestType::Standard,
-          recipient: crate::USBRecipient::Device,
+        crate::UsbControlTransferParameters {
+          request_type: crate::UsbRequestType::Standard,
+          recipient: crate::UsbRecipient::Device,
           // kGetDescriptorRequest
           request: 0x06,
           // kDeviceDescriptorType
