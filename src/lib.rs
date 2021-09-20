@@ -1116,7 +1116,7 @@ mod tests {
     Ok(())
   }
 
-  #[test]
+  #[flaky_test::flaky_test]
   fn test_device_blink() -> crate::Result<()> {
     arduino(|device| {
       device.transfer_out(4, b"H")?;
@@ -1147,7 +1147,7 @@ mod tests {
     })
   }
 
-  #[test]
+  #[flaky_test::flaky_test]
   fn test_device_control() -> crate::Result<()> {
     arduino(|device| {
       let device_descriptor_bytes = device.control_transfer_in(
@@ -1215,7 +1215,7 @@ mod tests {
     })
   }
 
-  #[test]
+  #[flaky_test::flaky_test]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   fn test_unimplemented() {
     let mut device = test_device();
