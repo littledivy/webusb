@@ -994,7 +994,7 @@ mod tests {
   ) -> crate::Result<()> {
     let mut device = test_device();
 
-    device.open()?;
+    device.open().unwrap();
 
     // Not part of public API.
     // This is to ensure that the device is not busy.
@@ -1002,7 +1002,8 @@ mod tests {
       .device_handle
       .as_mut()
       .unwrap()
-      .set_auto_detach_kernel_driver(true)?;
+      .set_auto_detach_kernel_driver(true)
+      .unwrap();
 
     // A real world application should use `device.configuration.is_none()`.
     match device.select_configuration(1) {
@@ -1012,36 +1013,43 @@ mod tests {
       _ => unreachable!(),
     }
 
-    device.claim_interface(2)?;
+    // Device might be busy.
+    if device.claim_interface(2).is_ok() {
+      device.select_alternate_interface(2, 0)?;
 
-    device.select_alternate_interface(2, 0)?;
+      device
+        .control_transfer_out(
+          crate::UsbControlTransferParameters {
+            request_type: crate::UsbRequestType::Class,
+            recipient: crate::UsbRecipient::Interface,
+            request: 0x22,
+            value: 0x01,
+            index: 2,
+          },
+          &[],
+        )
+        .unwrap();
 
-    device.control_transfer_out(
-      crate::UsbControlTransferParameters {
-        request_type: crate::UsbRequestType::Class,
-        recipient: crate::UsbRecipient::Interface,
-        request: 0x22,
-        value: 0x01,
-        index: 2,
-      },
-      &[],
-    )?;
+      test_fn(&mut device).unwrap();
 
-    test_fn(&mut device)?;
-
-    device.control_transfer_out(
-      crate::UsbControlTransferParameters {
-        request_type: crate::UsbRequestType::Class,
-        recipient: crate::UsbRecipient::Interface,
-        request: 0x22,
-        value: 0x00,
-        index: 2,
-      },
-      &[],
-    )?;
-    device.release_interface(2)?;
-    device.reset()?;
-    device.close()?;
+      device
+        .control_transfer_out(
+          crate::UsbControlTransferParameters {
+            request_type: crate::UsbRequestType::Class,
+            recipient: crate::UsbRecipient::Interface,
+            request: 0x22,
+            value: 0x00,
+            index: 2,
+          },
+          &[],
+        )
+        .unwrap();
+    } else {
+      test_fn(&mut device).unwrap();
+    }
+    device.release_interface(2).unwrap();
+    device.reset().unwrap();
+    device.close().unwrap();
 
     Ok(())
   }
