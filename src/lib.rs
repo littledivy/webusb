@@ -1147,7 +1147,7 @@ mod tests {
     })
   }
 
-  #[flaky_test::flaky_test]
+  #[test]
   fn test_device_control() -> crate::Result<()> {
     arduino(|device| {
       let device_descriptor_bytes = device.control_transfer_in(
