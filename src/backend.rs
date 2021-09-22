@@ -45,6 +45,7 @@ pub trait WebUsbDevice {
 }
 
 /// Describes a Usb backend. This lets target native, WASM and even *nothing*
+#[async_trait::async_trait]
 pub trait Backend {
   type Device;
 
@@ -54,5 +55,5 @@ pub trait Backend {
     Self: Sized;
 
   /// List all devices.
-  fn devices(&self) -> Result<Vec<Self::Device>>;
+  async fn devices(&self) -> Result<Vec<Self::Device>>;
 }

@@ -9,6 +9,9 @@ use core::convert::TryFrom;
 #[cfg(feature = "libusb")]
 pub use rusb;
 
+#[cfg(feature = "wasm")]
+pub use web_sys;
+
 mod backend;
 pub mod constants;
 mod descriptors;
@@ -59,6 +62,25 @@ pub struct UsbConfiguration {
   interfaces: Vec<UsbInterface>,
 }
 
+#[cfg(feature = "wasm")]
+impl From<web_sys::UsbConfiguration> for UsbConfiguration {
+  fn from(config: web_sys::UsbConfiguration) -> Self {
+    let interfaces = {
+      let array = config.interfaces().to_vec();
+      array
+        .into_iter()
+        .map(|itf| UsbInterface::from(web_sys::UsbInterface::from(itf)))
+        .collect()
+    };
+
+    Self {
+      configuration_name: config.configuration_name(),
+      configuration_value: config.configuration_value(),
+      interfaces,
+    }
+  }
+}
+
 #[cfg(feature = "libusb")]
 impl UsbConfiguration {
   pub fn from(
@@ -86,6 +108,27 @@ pub struct UsbInterface {
   alternate: UsbAlternateInterface,
   alternates: Vec<UsbAlternateInterface>,
   claimed: bool,
+}
+
+#[cfg(feature = "wasm")]
+impl From<web_sys::UsbInterface> for UsbInterface {
+  fn from(interface: web_sys::UsbInterface) -> Self {
+    let alternates = {
+      let array = interface.alternates().to_vec();
+      array
+        .into_iter()
+        .map(|ep| {
+          UsbAlternateInterface::from(web_sys::UsbAlternateInterface::from(ep))
+        })
+        .collect()
+    };
+    Self {
+      interface_number: interface.interface_number(),
+      alternate: UsbAlternateInterface::from(interface.alternate()),
+      alternates,
+      claimed: interface.claimed(),
+    }
+  }
 }
 
 #[cfg(feature = "libusb")]
@@ -139,6 +182,27 @@ pub struct UsbEndpoint {
   packet_size: u16,
 }
 
+#[cfg(feature = "wasm")]
+impl From<web_sys::UsbEndpoint> for UsbEndpoint {
+  fn from(ep: web_sys::UsbEndpoint) -> Self {
+    Self {
+      endpoint_number: ep.endpoint_number(),
+      direction: match ep.direction() {
+        web_sys::UsbDirection::In => Direction::In,
+        web_sys::UsbDirection::Out => Direction::Out,
+        _ => unreachable!(),
+      },
+      r#type: match ep.type_() {
+        web_sys::UsbEndpointType::Bulk => UsbEndpointType::Bulk,
+        web_sys::UsbEndpointType::Interrupt => UsbEndpointType::Interrupt,
+        web_sys::UsbEndpointType::Isochronous => UsbEndpointType::Isochronous,
+        _ => unreachable!(),
+      },
+      packet_size: ep.packet_size() as u16,
+    }
+  }
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UsbAlternateInterface {
@@ -148,6 +212,28 @@ pub struct UsbAlternateInterface {
   interface_protocol: u8,
   interface_name: Option<String>,
   endpoints: Vec<UsbEndpoint>,
+}
+
+#[cfg(feature = "wasm")]
+impl From<web_sys::UsbAlternateInterface> for UsbAlternateInterface {
+  fn from(interface: web_sys::UsbAlternateInterface) -> Self {
+    let endpoints = {
+      let array = interface.endpoints().to_vec();
+      array
+        .into_iter()
+        .map(|ep| UsbEndpoint::from(web_sys::UsbEndpoint::from(ep)))
+        .collect()
+    };
+
+    Self {
+      alternate_setting: interface.alternate_setting(),
+      interface_class: interface.interface_class(),
+      interface_subclass: interface.interface_subclass(),
+      interface_protocol: interface.interface_protocol(),
+      interface_name: interface.interface_name(),
+      endpoints,
+    }
+  }
 }
 
 #[cfg(feature = "libusb")]
@@ -209,9 +295,15 @@ pub struct UsbDevice {
   /// The `WEBUSB_URL` value. Present in devices with the WebUSB Platform Capability Descriptor.
   #[serde(skip)]
   pub url: Option<String>,
+
   #[serde(skip)]
   #[cfg(feature = "libusb")]
   device: rusb::Device<rusb::Context>,
+
+  #[serde(skip)]
+  #[cfg(feature = "wasm")]
+  device: web_sys::UsbDevice,
+
   #[serde(skip)]
   #[cfg(feature = "libusb")]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
@@ -794,6 +886,45 @@ pub struct UsbControlTransferParameters {
   index: u16,
 }
 
+#[cfg(feature = "wasm")]
+impl TryFrom<web_sys::UsbDevice> for UsbDevice {
+  type Error = Error;
+
+  fn try_from(dev: web_sys::UsbDevice) -> Result<UsbDevice> {
+    let configurations = {
+      let array = dev.configurations().to_vec();
+      array
+        .into_iter()
+        .map(|config| {
+          UsbConfiguration::from(web_sys::UsbConfiguration::from(config))
+        })
+        .collect()
+    };
+
+    Ok(UsbDevice {
+      configurations,
+      configuration: dev.configuration().map(|c| UsbConfiguration::from(c)),
+      device_class: dev.device_class(),
+      device_subclass: dev.device_subclass(),
+      device_protocol: dev.device_protocol(),
+      device_version_major: dev.device_version_major(),
+      device_version_minor: dev.device_version_minor(),
+      device_version_subminor: dev.device_version_subminor(),
+      product_id: dev.product_id(),
+      usb_version_major: dev.usb_version_major(),
+      usb_version_minor: dev.usb_version_minor(),
+      usb_version_subminor: dev.usb_version_subminor(),
+      vendor_id: dev.vendor_id(),
+      manufacturer_name: dev.manufacturer_name(),
+      product_name: dev.product_name(),
+      serial_number: dev.serial_number(),
+      opened: dev.opened(),
+      url: None,
+      device: dev,
+    })
+  }
+}
+
 #[cfg(feature = "libusb")]
 impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
   type Error = Error;
@@ -929,6 +1060,37 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
   }
 }
 
+#[cfg(feature = "wasm")]
+pub struct Context(web_sys::Usb);
+
+#[cfg(feature = "wasm")]
+impl Backend for Context {
+  type Device = UsbDevice;
+
+  fn init() -> Result<Self> {
+    let window = web_sys::window().unwrap();
+    Ok(Self(window.navigator().usb()))
+  }
+
+  async fn devices(&self) -> Result<Vec<Self::Device>> {
+    let usb = self.0.clone();
+
+    let fut = usb.get_devices();
+
+    let devices_array: js_sys::Array = js_sys::Array::from(
+      &wasm_bindgen_futures::JsFuture::from(fut).await.unwrap(),
+    );
+
+    let devices = devices_array
+      .to_vec()
+      .into_iter()
+      .map(|val| Self::Device::try_from(web_sys::UsbDevice::from(val)).unwrap())
+      .collect();
+
+    Ok(devices)
+  }
+}
+
 /// A WebUSB Context. Provides APIs for device enumaration.
 #[cfg(feature = "libusb")]
 pub struct Context(rusb::Context);
@@ -942,7 +1104,7 @@ impl Backend for Context {
     Ok(Self(ctx))
   }
 
-  fn devices(&self) -> Result<Vec<Self::Device>> {
+  async fn devices(&self) -> Result<Vec<Self::Device>> {
     let devices = self.0.devices()?;
 
     let usb_devices: Vec<Self::Device> = devices
