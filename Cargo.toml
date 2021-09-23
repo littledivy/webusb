@@ -13,13 +13,19 @@ keywords = [
 
 [features]
 default = ["libusb"]
+wasm = ["web-sys", "wasm-bindgen", "wasm-bindgen-futures"]
 libusb = ["rusb", "libusb1-sys"]
 
 [dependencies]
 rusb = { version = "0.8.1", optional = true }
 libusb1-sys = { version = "0.5.0" , optional = true }
+web-sys = { version = "0.3.55", features = ["Window", "Navigator", "Usb", "UsbDevice", "UsbConfiguration", "UsbInterface", "UsbAlternateInterface", "UsbEndpoint", "UsbDirection", "UsbEndpointType"], optional = true }
+js-sys = { version = "0.3.55" }
+wasm-bindgen-futures = { version = "0.4.28", optional = true }
+wasm-bindgen = { version = "0.2.78", optional = true }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 # For a loose connection :-)
 flaky_test = "0.1.0"
+tokio = { version = "1.12.0", features = ["rt", "macros"] }
