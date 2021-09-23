@@ -12,8 +12,6 @@ Rust.
 webusb = "0.1.2"
 ```
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X4Y6IZ)
-
 ### Async
 
 The methods are marked as `async` for compability between the native and wasm target.
@@ -25,6 +23,8 @@ Hardware tests are run before merging a PR and then on `main`. The test runner i
 Tests are reviewed and triggered by maintainers on PRs to prevent malicious execution. Load [this sketch](https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino) into yours to run the tests locally.
 
 When writing tests you might encounter frequent Io / NoDevice errors, this can be due to loose wired connection. Mark these tests as `#[flaky_test::flaky_test]`.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X4Y6IZ)
 
 ### License
 
