@@ -12,12 +12,9 @@ pub use rusb;
 #[cfg(feature = "wasm")]
 pub use web_sys;
 
-mod backend;
 pub mod constants;
 mod descriptors;
 
-use crate::backend::Backend;
-use crate::backend::WebUsbDevice;
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
@@ -376,39 +373,64 @@ impl UsbDevice {
   }
 }
 
-#[cfg(feature = "libusb")]
-impl WebUsbDevice for UsbDevice {
-  fn open(&mut self) -> Result<()> {
+impl UsbDevice {
+  pub async fn isochronous_transfer_in(&mut self) {
+    unimplemented!()
+  }
+
+  pub async fn isochronous_transfer_out(&mut self) {
+    unimplemented!()
+  }
+
+  pub async fn open(&mut self) -> Result<()> {
     // 3. device is already open?
     if self.opened {
       return Ok(());
     }
 
     // 4.
-    let handle = self.device.open()?;
-    self.device_handle = Some(handle);
+    #[cfg(feature = "libusb")]
+    {
+      let handle = self.device.open()?;
+      self.device_handle = Some(handle);
+    }
+
+    #[cfg(feature = "wasm")]
+    {
+      let fut = self.device.open();
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
+    }
 
     // 5.
     self.opened = true;
     Ok(())
   }
 
-  fn close(&mut self) -> Result<()> {
+  pub async fn close(&mut self) -> Result<()> {
     // 3. device is already closed?
     if !self.opened {
       return Ok(());
     }
 
-    match &self.device_handle {
-      Some(handle_ref) => {
-        // 5-6.
-        // release claimed interfaces, close device and release handle
-        drop(handle_ref);
-      }
-      None => unreachable!(),
-    };
+    #[cfg(feature = "libusb")]
+    {
+      match &self.device_handle {
+        Some(handle_ref) => {
+          // 5-6.
+          // release claimed interfaces, close device and release handle
+          drop(handle_ref);
+        }
+        None => unreachable!(),
+      };
 
-    self.device_handle = None;
+      self.device_handle = None;
+    }
+
+    #[cfg(feature = "wasm")]
+    {
+      let fut = self.device.close();
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
+    }
 
     // 7.
     self.opened = false;
@@ -416,445 +438,543 @@ impl WebUsbDevice for UsbDevice {
   }
 
   /// `configuration_value` is the bConfigurationValue of the device configuration.
-  fn select_configuration(&mut self, configuration_value: u8) -> Result<()> {
-    // 3.
-    let configuration = match self
-      .configurations
-      .iter()
-      .position(|c| c.configuration_value == configuration_value)
+  pub async fn select_configuration(
+    &mut self,
+    configuration_value: u8,
+  ) -> Result<()> {
+    #[cfg(feature = "wasm")]
     {
-      Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened {
-      return Err(Error::InvalidState);
+      let fut = self.device.select_configuration(configuration_value);
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
+      // TODO: sync configuration
     }
 
-    // 5-6.
-    let handle = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        // Calls `libusb_set_configuration`
-        handle_ref.set_active_configuration(configuration_value)?;
-        handle_ref
-      }
-      None => unreachable!(),
-    };
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      let configuration = match self
+        .configurations
+        .iter()
+        .position(|c| c.configuration_value == configuration_value)
+      {
+        Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
+        None => return Err(Error::NotFound),
+      };
 
-    // 7.
-    self.configuration = Some(UsbConfiguration::from(configuration, &handle)?);
+      // 4.
+      if !self.opened {
+        return Err(Error::InvalidState);
+      }
+
+      // 5-6.
+      let handle = match self.device_handle {
+        Some(ref mut handle_ref) => {
+          // Calls `libusb_set_configuration`
+          handle_ref.set_active_configuration(configuration_value)?;
+          handle_ref
+        }
+        None => unreachable!(),
+      };
+
+      // 7.
+      self.configuration =
+        Some(UsbConfiguration::from(configuration, &handle)?);
+    }
+    Ok(())
+  }
+
+  pub async fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
+    #[cfg(feature = "wasm")]
+    {
+      let fut = self.device.claim_interface(interface_number);
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
+      // TODO: sync configuration
+    }
+
+    #[cfg(feature = "libusb")]
+    {
+      // 2.
+      let mut active_configuration =
+        self.configuration.as_mut().ok_or(Error::NotFound)?;
+      let mut interface = match active_configuration
+        .interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+      {
+        Some(mut i) => i,
+        None => return Err(Error::NotFound),
+      };
+
+      // 3.
+      if !self.opened {
+        return Err(Error::InvalidState);
+      }
+
+      // 4.
+      if interface.claimed {
+        return Ok(());
+      }
+
+      // 5.
+      match self.device_handle {
+        Some(ref mut handle_ref) => {
+          handle_ref.claim_interface(interface.interface_number)?;
+        }
+        None => unreachable!(),
+      };
+
+      // 6.
+      interface.claimed = true;
+    }
 
     Ok(())
   }
 
-  fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
-    // 2.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
+  pub async fn release_interface(
+    &mut self,
+    interface_number: u8,
+  ) -> Result<()> {
+    #[cfg(feature = "wasm")]
     {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 3.
-    if !self.opened {
-      return Err(Error::InvalidState);
+      let fut = self.device.release_interface(interface_number);
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
     }
 
-    // 4.
-    if interface.claimed {
-      return Ok(());
-    }
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      let mut active_configuration =
+        self.configuration.as_mut().ok_or(Error::NotFound)?;
+      let mut interface = match active_configuration
+        .interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+      {
+        Some(mut i) => i,
+        None => return Err(Error::NotFound),
+      };
 
-    // 5.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.claim_interface(interface.interface_number)?;
+      // 4.
+      if !self.opened {
+        return Err(Error::InvalidState);
       }
-      None => unreachable!(),
-    };
 
-    // 6.
-    interface.claimed = true;
+      // 5.
+      if !interface.claimed {
+        return Ok(());
+      }
+
+      // 5.
+      match self.device_handle {
+        Some(ref mut handle_ref) => {
+          handle_ref.release_interface(interface.interface_number)?;
+        }
+        None => unreachable!(),
+      };
+
+      // 6.
+      interface.claimed = false;
+    }
 
     Ok(())
   }
 
-  fn release_interface(&mut self, interface_number: u8) -> Result<()> {
-    // 3.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
-    {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 5.
-    if !interface.claimed {
-      return Ok(());
-    }
-
-    // 5.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.release_interface(interface.interface_number)?;
-      }
-      None => unreachable!(),
-    };
-
-    // 6.
-    interface.claimed = false;
-
-    Ok(())
-  }
-
-  fn select_alternate_interface(
+  pub async fn select_alternate_interface(
     &mut self,
     interface_number: u8,
     alternate_setting: u8,
   ) -> Result<()> {
-    // 3.
-    let mut active_configuration =
-      self.configuration.as_mut().ok_or(Error::NotFound)?;
-    let mut interface = match active_configuration
-      .interfaces
-      .iter_mut()
-      .find(|i| i.interface_number == interface_number)
+    #[cfg(feature = "wasm")]
     {
-      Some(mut i) => i,
-      None => return Err(Error::NotFound),
-    };
-
-    // 4.
-    if !self.opened || !interface.claimed {
-      return Err(Error::InvalidState);
+      let fut = self
+        .device
+        .select_alternate_interface(interface_number, alternate_setting);
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
     }
 
-    // 5-6.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        handle_ref.set_alternate_setting(
-          interface.interface_number,
-          alternate_setting,
-        )?;
-      }
-      None => unreachable!(),
-    };
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      let mut active_configuration =
+        self.configuration.as_mut().ok_or(Error::NotFound)?;
+      let mut interface = match active_configuration
+        .interfaces
+        .iter_mut()
+        .find(|i| i.interface_number == interface_number)
+      {
+        Some(mut i) => i,
+        None => return Err(Error::NotFound),
+      };
 
+      // 4.
+      if !self.opened || !interface.claimed {
+        return Err(Error::InvalidState);
+      }
+
+      // 5-6.
+      match self.device_handle {
+        Some(ref mut handle_ref) => {
+          handle_ref.set_alternate_setting(
+            interface.interface_number,
+            alternate_setting,
+          )?;
+        }
+        None => unreachable!(),
+      };
+    }
     // 7.
     return Ok(());
   }
 
-  fn control_transfer_in(
+  pub async fn control_transfer_in(
     &mut self,
     setup: UsbControlTransferParameters,
     length: usize,
   ) -> Result<Vec<u8>> {
-    // 3.
-    if !self.opened {
-      return Err(Error::InvalidState);
+    #[cfg(feature = "wasm")]
+    {
+      // TODO
+      return Ok(vec![0; length]);
     }
 
-    // 4.
-    self.validate_control_setup(&setup)?;
-
-    // 5.
-    let mut buffer = vec![0u8; length];
-
-    // 6-7.
-    let bytes_transferred = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let req = match setup.request_type {
-          UsbRequestType::Standard => rusb::RequestType::Standard,
-          UsbRequestType::Class => rusb::RequestType::Class,
-          UsbRequestType::Vendor => rusb::RequestType::Vendor,
-        };
-
-        let recipient = match setup.recipient {
-          UsbRecipient::Device => rusb::Recipient::Device,
-          UsbRecipient::Interface => rusb::Recipient::Interface,
-          UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
-          UsbRecipient::Other => rusb::Recipient::Other,
-        };
-
-        let req_type = rusb::request_type(rusb::Direction::In, req, recipient);
-
-        handle_ref.read_control(
-          req_type,
-          setup.request,
-          setup.value,
-          setup.index,
-          &mut buffer,
-          std::time::Duration::new(0, 0),
-        )?
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      if !self.opened {
+        return Err(Error::InvalidState);
       }
-      None => unreachable!(),
-    };
 
-    // 8-9.
-    // Returns the buffer containing first bytes_transferred instead of returning
-    // a UsbInTransferResult.
-    let result = &buffer[0..bytes_transferred];
+      // 4.
+      self.validate_control_setup(&setup)?;
 
-    // 10-11. TODO: Will need to handle `read_control` Err
+      // 5.
+      let mut buffer = vec![0u8; length];
 
-    // 13.
-    Ok(result.to_vec())
+      // 6-7.
+      let bytes_transferred = match self.device_handle {
+        Some(ref mut handle_ref) => {
+          let req = match setup.request_type {
+            UsbRequestType::Standard => rusb::RequestType::Standard,
+            UsbRequestType::Class => rusb::RequestType::Class,
+            UsbRequestType::Vendor => rusb::RequestType::Vendor,
+          };
+
+          let recipient = match setup.recipient {
+            UsbRecipient::Device => rusb::Recipient::Device,
+            UsbRecipient::Interface => rusb::Recipient::Interface,
+            UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
+            UsbRecipient::Other => rusb::Recipient::Other,
+          };
+
+          let req_type =
+            rusb::request_type(rusb::Direction::In, req, recipient);
+
+          handle_ref.read_control(
+            req_type,
+            setup.request,
+            setup.value,
+            setup.index,
+            &mut buffer,
+            std::time::Duration::new(0, 0),
+          )?
+        }
+        None => unreachable!(),
+      };
+
+      // 8-9.
+      // Returns the buffer containing first bytes_transferred instead of returning
+      // a UsbInTransferResult.
+      let result = &buffer[0..bytes_transferred];
+
+      // 10-11. TODO: Will need to handle `read_control` Err
+
+      // 13.
+      Ok(result.to_vec())
+    }
   }
 
-  fn control_transfer_out(
+  pub async fn control_transfer_out(
     &mut self,
     setup: UsbControlTransferParameters,
     data: &[u8],
   ) -> Result<usize> {
-    // 2.
-    if !self.opened {
-      return Err(Error::InvalidState);
+    #[cfg(feature = "wasm")]
+    {
+      // TODO
+      return Ok(0);
     }
 
-    // 3.
-    self.validate_control_setup(&setup)?;
-
-    // 4-8.
-    let bytes_written = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let req = match setup.request_type {
-          UsbRequestType::Standard => rusb::RequestType::Standard,
-          UsbRequestType::Class => rusb::RequestType::Class,
-          UsbRequestType::Vendor => rusb::RequestType::Vendor,
-        };
-
-        let recipient = match setup.recipient {
-          UsbRecipient::Device => rusb::Recipient::Device,
-          UsbRecipient::Interface => rusb::Recipient::Interface,
-          UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
-          UsbRecipient::Other => rusb::Recipient::Other,
-        };
-
-        let req_type = rusb::request_type(rusb::Direction::Out, req, recipient);
-
-        handle_ref.write_control(
-          req_type,
-          setup.request,
-          setup.value,
-          setup.index,
-          data,
-          std::time::Duration::new(0, 0),
-        )?
+    #[cfg(feature = "libusb")]
+    {
+      // 2.
+      if !self.opened {
+        return Err(Error::InvalidState);
       }
-      None => unreachable!(),
-    };
 
-    // 9.
-    Ok(bytes_written)
+      // 3.
+      self.validate_control_setup(&setup)?;
+
+      // 4-8.
+      let bytes_written = match self.device_handle {
+        Some(ref mut handle_ref) => {
+          let req = match setup.request_type {
+            UsbRequestType::Standard => rusb::RequestType::Standard,
+            UsbRequestType::Class => rusb::RequestType::Class,
+            UsbRequestType::Vendor => rusb::RequestType::Vendor,
+          };
+
+          let recipient = match setup.recipient {
+            UsbRecipient::Device => rusb::Recipient::Device,
+            UsbRecipient::Interface => rusb::Recipient::Interface,
+            UsbRecipient::Endpoint => rusb::Recipient::Endpoint,
+            UsbRecipient::Other => rusb::Recipient::Other,
+          };
+
+          let req_type =
+            rusb::request_type(rusb::Direction::Out, req, recipient);
+
+          handle_ref.write_control(
+            req_type,
+            setup.request,
+            setup.value,
+            setup.index,
+            data,
+            std::time::Duration::new(0, 0),
+          )?
+        }
+        None => unreachable!(),
+      };
+
+      // 9.
+      Ok(bytes_written)
+    }
   }
 
-  fn clear_halt(
+  pub async fn clear_halt(
     &mut self,
     direction: Direction,
     endpoint_number: u8,
   ) -> Result<()> {
-    let active_configuration =
-      self.configuration.as_ref().ok_or(Error::NotFound)?;
-
-    // 2.
-    let interface = active_configuration
-      .interfaces
-      .iter()
-      .find(|itf| {
-        itf
-          .alternates
-          .iter()
-          .find(|alt| {
-            alt
-              .endpoints
-              .iter()
-              .find(|endpoint| {
-                endpoint.endpoint_number == endpoint_number
-                  && endpoint.direction == direction
-              })
-              .is_some()
-          })
-          .is_some()
-      })
-      .ok_or(Error::NotFound)?;
-
-    // 3.
-    if !self.opened || !interface.claimed {
-      return Err(Error::InvalidState);
+    #[cfg(feature = "wasm")]
+    {
+      // TODO
     }
 
-    // 4-5.
-    match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let mut endpoint = endpoint_number;
+    #[cfg(feature = "libusb")]
+    {
+      let active_configuration =
+        self.configuration.as_ref().ok_or(Error::NotFound)?;
 
-        match direction {
-          Direction::In => endpoint |= EP_DIR_IN,
-          Direction::Out => endpoint |= EP_DIR_OUT,
-        };
+      // 2.
+      let interface = active_configuration
+        .interfaces
+        .iter()
+        .find(|itf| {
+          itf
+            .alternates
+            .iter()
+            .find(|alt| {
+              alt
+                .endpoints
+                .iter()
+                .find(|endpoint| {
+                  endpoint.endpoint_number == endpoint_number
+                    && endpoint.direction == direction
+                })
+                .is_some()
+            })
+            .is_some()
+        })
+        .ok_or(Error::NotFound)?;
 
-        handle_ref.clear_halt(endpoint)?
+      // 3.
+      if !self.opened || !interface.claimed {
+        return Err(Error::InvalidState);
       }
-      None => unreachable!(),
-    };
 
+      // 4-5.
+      match self.device_handle {
+        Some(ref mut handle_ref) => {
+          let mut endpoint = endpoint_number;
+
+          match direction {
+            Direction::In => endpoint |= EP_DIR_IN,
+            Direction::Out => endpoint |= EP_DIR_OUT,
+          };
+
+          handle_ref.clear_halt(endpoint)?
+        }
+        None => unreachable!(),
+      };
+    }
     Ok(())
   }
 
-  fn transfer_in(
+  pub async fn transfer_in(
     &mut self,
     endpoint_number: u8,
     length: usize,
   ) -> Result<Vec<u8>> {
-    // 3.
-    let endpoint = self
-      .configuration
-      .as_ref()
-      .ok_or(Error::NotFound)?
-      .interfaces
-      .iter()
-      .find_map(|itf| {
-        itf.alternates.iter().find_map(|alt| {
-          alt.endpoints.iter().find(|endpoint| {
-            endpoint.endpoint_number == endpoint_number
-              && endpoint.direction == Direction::In
+    #[cfg(feature = "wasm")]
+    {
+      // TODO
+      return Ok(vec![0; length]);
+    }
+
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      let endpoint = self
+        .configuration
+        .as_ref()
+        .ok_or(Error::NotFound)?
+        .interfaces
+        .iter()
+        .find_map(|itf| {
+          itf.alternates.iter().find_map(|alt| {
+            alt.endpoints.iter().find(|endpoint| {
+              endpoint.endpoint_number == endpoint_number
+                && endpoint.direction == Direction::In
+            })
           })
         })
-      })
-      .ok_or(Error::NotFound)?;
+        .ok_or(Error::NotFound)?;
 
-    // 4.
-    match endpoint.r#type {
-      UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
-      _ => return Err(Error::InvalidAccess),
-    }
-
-    // 5.
-    // FIXME: Check if interface is claimed
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 6.
-    let mut buffer = vec![0u8; length];
-
-    // 7-8.
-    let bytes_transferred = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let endpoint_addr = EP_DIR_IN | endpoint_number;
-
-        match endpoint.r#type {
-          UsbEndpointType::Bulk => handle_ref.read_bulk(
-            endpoint_addr,
-            &mut buffer,
-            std::time::Duration::new(0, 0),
-          )?,
-          UsbEndpointType::Interrupt => handle_ref.read_interrupt(
-            endpoint_addr,
-            &mut buffer,
-            std::time::Duration::new(0, 0),
-          )?,
-          _ => unreachable!(),
-        }
+      // 4.
+      match endpoint.r#type {
+        UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
+        _ => return Err(Error::InvalidAccess),
       }
-      None => unreachable!(),
-    };
 
-    // 10.
-    let result = &buffer[0..bytes_transferred];
+      // 5.
+      // FIXME: Check if interface is claimed
+      if !self.opened {
+        return Err(Error::InvalidState);
+      }
 
-    // 11-14. See `control_transfer_in` TODO comment
+      // 6.
+      let mut buffer = vec![0u8; length];
 
-    // 15.
-    Ok(result.to_vec())
+      // 7-8.
+      let bytes_transferred = match self.device_handle {
+        Some(ref mut handle_ref) => {
+          let endpoint_addr = EP_DIR_IN | endpoint_number;
+
+          match endpoint.r#type {
+            UsbEndpointType::Bulk => handle_ref.read_bulk(
+              endpoint_addr,
+              &mut buffer,
+              std::time::Duration::new(0, 0),
+            )?,
+            UsbEndpointType::Interrupt => handle_ref.read_interrupt(
+              endpoint_addr,
+              &mut buffer,
+              std::time::Duration::new(0, 0),
+            )?,
+            _ => unreachable!(),
+          }
+        }
+        None => unreachable!(),
+      };
+
+      // 10.
+      let result = &buffer[0..bytes_transferred];
+
+      // 11-14. See `control_transfer_in` TODO comment
+
+      // 15.
+      Ok(result.to_vec())
+    }
   }
 
-  fn transfer_out(
+  pub async fn transfer_out(
     &mut self,
     endpoint_number: u8,
     data: &[u8],
   ) -> Result<usize> {
-    // 2.
-    let endpoint = self
-      .configuration
-      .as_ref()
-      .ok_or(Error::NotFound)?
-      .interfaces
-      .iter()
-      .find_map(|itf| {
-        itf.alternates.iter().find_map(|alt| {
-          alt.endpoints.iter().find(|endpoint| {
-            endpoint.endpoint_number == endpoint_number
-              && endpoint.direction == Direction::Out
+    #[cfg(feature = "wasm")]
+    {
+      // TODO
+      return Ok(0);
+    }
+
+    #[cfg(feature = "libusb")]
+    {
+      // 2.
+      let endpoint = self
+        .configuration
+        .as_ref()
+        .ok_or(Error::NotFound)?
+        .interfaces
+        .iter()
+        .find_map(|itf| {
+          itf.alternates.iter().find_map(|alt| {
+            alt.endpoints.iter().find(|endpoint| {
+              endpoint.endpoint_number == endpoint_number
+                && endpoint.direction == Direction::Out
+            })
           })
         })
-      })
-      .ok_or(Error::NotFound)?;
+        .ok_or(Error::NotFound)?;
 
-    // 3.
-    match endpoint.r#type {
-      UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
-      _ => return Err(Error::InvalidAccess),
-    }
-
-    // 4.
-    // FIXME: Check if interface is claimed
-    if !self.opened {
-      return Err(Error::InvalidState);
-    }
-
-    // 5.
-    let bytes_written = match self.device_handle {
-      Some(ref mut handle_ref) => {
-        let endpoint_addr = EP_DIR_OUT | endpoint_number;
-
-        match endpoint.r#type {
-          UsbEndpointType::Bulk => handle_ref.write_bulk(
-            endpoint_addr,
-            data,
-            std::time::Duration::new(0, 0),
-          )?,
-          UsbEndpointType::Interrupt => handle_ref.write_interrupt(
-            endpoint_addr,
-            data,
-            std::time::Duration::new(0, 0),
-          )?,
-          _ => unreachable!(),
-        }
+      // 3.
+      match endpoint.r#type {
+        UsbEndpointType::Bulk | UsbEndpointType::Interrupt => {}
+        _ => return Err(Error::InvalidAccess),
       }
-      None => unreachable!(),
-    };
 
-    Ok(bytes_written)
+      // 4.
+      // FIXME: Check if interface is claimed
+      if !self.opened {
+        return Err(Error::InvalidState);
+      }
+
+      // 5.
+      let bytes_written = match self.device_handle {
+        Some(ref mut handle_ref) => {
+          let endpoint_addr = EP_DIR_OUT | endpoint_number;
+
+          match endpoint.r#type {
+            UsbEndpointType::Bulk => handle_ref.write_bulk(
+              endpoint_addr,
+              data,
+              std::time::Duration::new(0, 0),
+            )?,
+            UsbEndpointType::Interrupt => handle_ref.write_interrupt(
+              endpoint_addr,
+              data,
+              std::time::Duration::new(0, 0),
+            )?,
+            _ => unreachable!(),
+          }
+        }
+        None => unreachable!(),
+      };
+
+      Ok(bytes_written)
+    }
   }
 
-  fn reset(&mut self) -> Result<()> {
-    // 3.
-    if !self.opened {
-      return Err(Error::InvalidState);
+  pub async fn reset(&mut self) -> Result<()> {
+    #[cfg(feature = "wasm")]
+    {
+      let fut = self.device.reset();
+      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
     }
 
-    // 4-6.
-    match self.device_handle {
-      Some(ref mut handle_ref) => handle_ref.reset()?,
-      None => unreachable!(),
-    };
+    #[cfg(feature = "libusb")]
+    {
+      // 3.
+      if !self.opened {
+        return Err(Error::InvalidState);
+      }
 
+      // 4-6.
+      match self.device_handle {
+        Some(ref mut handle_ref) => handle_ref.reset()?,
+        None => unreachable!(),
+      };
+    }
     Ok(())
   }
 }
@@ -1064,27 +1184,23 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
 pub struct Context(web_sys::Usb);
 
 #[cfg(feature = "wasm")]
-impl Backend for Context {
-  type Device = UsbDevice;
-
-  fn init() -> Result<Self> {
+impl Context {
+  pub fn init() -> Result<Self> {
     let window = web_sys::window().unwrap();
     Ok(Self(window.navigator().usb()))
   }
 
-  async fn devices(&self) -> Result<Vec<Self::Device>> {
+  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
     let usb = self.0.clone();
 
     let fut = usb.get_devices();
-
-    let devices_array: js_sys::Array = js_sys::Array::from(
-      &wasm_bindgen_futures::JsFuture::from(fut).await.unwrap(),
-    );
+    let fut_value = wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
+    let devices_array: js_sys::Array = js_sys::Array::from(&fut_value);
 
     let devices = devices_array
       .to_vec()
       .into_iter()
-      .map(|val| Self::Device::try_from(web_sys::UsbDevice::from(val)).unwrap())
+      .map(|val| UsbDevice::try_from(web_sys::UsbDevice::from(val)).unwrap())
       .collect();
 
     Ok(devices)
@@ -1096,18 +1212,16 @@ impl Backend for Context {
 pub struct Context(rusb::Context);
 
 #[cfg(feature = "libusb")]
-impl Backend for Context {
-  type Device = UsbDevice;
-
+impl Context {
   fn init() -> Result<Self> {
     let ctx = rusb::Context::new()?;
     Ok(Self(ctx))
   }
 
-  async fn devices(&self) -> Result<Vec<Self::Device>> {
+  async fn devices(&self) -> Result<Vec<UsbDevice>> {
     let devices = self.0.devices()?;
 
-    let usb_devices: Vec<Self::Device> = devices
+    let usb_devices: Vec<UsbDevice> = devices
       .iter()
       .filter(|d| {
         // Do not list hubs.
@@ -1115,13 +1229,13 @@ impl Backend for Context {
         d.device_descriptor().is_ok()
           && d.device_descriptor().unwrap().class_code() != 9
       })
-      .map(|d| Self::Device::try_from(d))
+      .map(|d| UsbDevice::try_from(d))
       .filter(|d| {
         d.is_ok()
           || d.as_ref().err().unwrap() != &Error::Usb(rusb::Error::Access)
       })
       .map(|d| d.unwrap())
-      .collect::<Vec<Self::Device>>();
+      .collect::<Vec<UsbDevice>>();
     Ok(usb_devices)
   }
 }
@@ -1130,8 +1244,6 @@ impl Backend for Context {
 mod tests {
   // These tests depends on real hardware.
   // TODO(@littledivy): Document running tests locally.
-  use crate::backend::Backend;
-  use crate::backend::WebUsbDevice;
   use crate::Context;
   use crate::Direction;
   use crate::Error;
@@ -1144,82 +1256,17 @@ mod tests {
 
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
-  fn test_device() -> UsbDevice {
+  async fn test_device() -> UsbDevice {
     let ctx = Context::init().unwrap();
-    let devices = ctx.devices().unwrap();
+    let devices = ctx.devices().await.unwrap();
     let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
     device
   }
 
-  fn arduino(
-    test_fn: fn(&mut UsbDevice) -> crate::Result<()>,
-  ) -> crate::Result<()> {
-    let mut device = test_device();
-
-    device.open().unwrap();
-
-    // Not part of public API.
-    // This is to ensure that the device is not busy.
-    device
-      .device_handle
-      .as_mut()
-      .unwrap()
-      .set_auto_detach_kernel_driver(true)
-      .unwrap();
-
-    // A real world application should use `device.configuration.is_none()`.
-    match device.select_configuration(1) {
-      Ok(_) => {} // Unreachable in the test runner
-      Err(crate::Error::Usb(rusb::Error::Busy))
-      | Err(crate::Error::InvalidState) => {}
-      _ => unreachable!(),
-    }
-
-    // Device might be busy.
-    if device.claim_interface(2).is_ok() {
-      device.select_alternate_interface(2, 0)?;
-
-      device
-        .control_transfer_out(
-          crate::UsbControlTransferParameters {
-            request_type: crate::UsbRequestType::Class,
-            recipient: crate::UsbRecipient::Interface,
-            request: 0x22,
-            value: 0x01,
-            index: 2,
-          },
-          &[],
-        )
-        .unwrap();
-
-      test_fn(&mut device).unwrap();
-
-      device
-        .control_transfer_out(
-          crate::UsbControlTransferParameters {
-            request_type: crate::UsbRequestType::Class,
-            recipient: crate::UsbRecipient::Interface,
-            request: 0x22,
-            value: 0x00,
-            index: 2,
-          },
-          &[],
-        )
-        .unwrap();
-    } else {
-      test_fn(&mut device).unwrap();
-    }
-    device.release_interface(2).unwrap();
-    device.reset().unwrap();
-    device.close().unwrap();
-
-    Ok(())
-  }
-
-  #[test]
-  fn test_bos() -> crate::Result<()> {
+  #[tokio::test]
+  async fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let mut device = test_device();
+    let mut device = test_device().await;
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
@@ -1228,27 +1275,27 @@ mod tests {
     Ok(())
   }
 
-  #[test]
-  fn test_device_initial_state() -> crate::Result<()> {
-    let mut device = test_device();
+  #[tokio::test]
+  async fn test_device_initial_state() -> crate::Result<()> {
+    let mut device = test_device().await;
 
-    device.open()?;
-    device.open()?;
+    device.open().await?;
+    device.open().await?;
 
-    device.close()?;
-    device.close()?;
+    device.close().await?;
+    device.close().await?;
     Ok(())
   }
 
-  #[test]
-  fn test_device_invalid_state() -> crate::Result<()> {
-    let mut device = test_device();
+  #[tokio::test]
+  async fn test_device_invalid_state() -> crate::Result<()> {
+    let mut device = test_device().await;
 
     // Without open() should panic.
-    device.select_configuration(1).unwrap_err();
-    device.claim_interface(2).unwrap_err();
+    device.select_configuration(1).await.unwrap_err();
+    device.claim_interface(2).await.unwrap_err();
 
-    device.select_alternate_interface(2, 0).unwrap_err();
+    device.select_alternate_interface(2, 0).await.unwrap_err();
 
     device
       .control_transfer_out(
@@ -1261,12 +1308,13 @@ mod tests {
         },
         &[],
       )
+      .await
       .unwrap_err();
 
-    device.transfer_out(4, b"H").unwrap_err();
-    device.clear_halt(Direction::Out, 4).unwrap_err();
-    device.transfer_out(4, b"L").unwrap_err();
-    device.clear_halt(Direction::Out, 4).unwrap_err();
+    device.transfer_out(4, b"H").await.unwrap_err();
+    device.clear_halt(Direction::Out, 4).await.unwrap_err();
+    device.transfer_out(4, b"L").await.unwrap_err();
+    device.clear_halt(Direction::Out, 4).await.unwrap_err();
 
     device
       .control_transfer_out(
@@ -1279,140 +1327,353 @@ mod tests {
         },
         &[],
       )
+      .await
       .unwrap_err();
-    device.release_interface(2).unwrap_err();
-    device.reset().unwrap_err();
-    device.close()?;
+    device.release_interface(2).await.unwrap_err();
+    device.reset().await.unwrap_err();
+    device.close().await?;
     Ok(())
   }
 
+  fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    use tokio::runtime;
+
+    let rt = runtime::Builder::new_current_thread()
+      .enable_all()
+      .build()
+      .unwrap();
+
+    rt.block_on(future)
+  }
+
   #[flaky_test::flaky_test]
-  fn test_device_blink() -> crate::Result<()> {
-    arduino(|device| {
-      device.transfer_out(4, b"H")?;
-      device.clear_halt(Direction::Out, 4)?;
+  fn test_device_blink() {
+    block_on(async move {
+      let mut device = test_device().await;
 
-      device.transfer_out(4, b"L")?;
-      device.clear_halt(Direction::Out, 4)?;
+      device.open().await.unwrap();
 
-      let recv = device.transfer_in(5, 64)?;
-      let mut first_run = false;
+      // Not part of public API.
+      // This is to ensure that the device is not busy.
+      device
+        .device_handle
+        .as_mut()
+        .unwrap()
+        .set_auto_detach_kernel_driver(true)
+        .unwrap();
 
-      match recv.as_slice() {
-        b"Sketch begins.\r\n> " => {
-          first_run = true;
-        }
-        b"H\r\nTurning LED on.\r\n> " => {}
+      // A real world application should use `device.configuration.is_none()`.
+      match device.select_configuration(1).await {
+        Ok(_) => {} // Unreachable in the test runner
+        Err(crate::Error::Usb(rusb::Error::Busy))
+        | Err(crate::Error::InvalidState) => {}
         _ => unreachable!(),
-      };
-      let recv = device.transfer_in(5, 64)?;
+      }
 
-      match (first_run, recv.as_slice()) {
-        (true, b"H\r\nTurning LED on.\r\n> ")
-        | (false, b"L\r\nTurning LED off.\r\n> ") => {}
-        _ => unreachable!(),
-      };
+      // Device might be busy.
+      if device.claim_interface(2).await.is_ok() {
+        device.select_alternate_interface(2, 0).await.unwrap();
 
-      Ok(())
+        device
+          .control_transfer_out(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Class,
+              recipient: crate::UsbRecipient::Interface,
+              request: 0x22,
+              value: 0x01,
+              index: 2,
+            },
+            &[],
+          )
+          .await
+          .unwrap();
+
+        device.transfer_out(4, b"H").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        device.transfer_out(4, b"L").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        let recv = device.transfer_in(5, 64).await.unwrap();
+        let mut first_run = false;
+
+        match recv.as_slice() {
+          b"Sketch begins.\r\n> " => {
+            first_run = true;
+          }
+          b"H\r\nTurning LED on.\r\n> " => {}
+          _ => unreachable!(),
+        };
+        let recv = device.transfer_in(5, 64).await.unwrap();
+
+        match (first_run, recv.as_slice()) {
+          (true, b"H\r\nTurning LED on.\r\n> ")
+          | (false, b"L\r\nTurning LED off.\r\n> ") => {}
+          _ => unreachable!(),
+        };
+
+        device
+          .control_transfer_out(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Class,
+              recipient: crate::UsbRecipient::Interface,
+              request: 0x22,
+              value: 0x00,
+              index: 2,
+            },
+            &[],
+          )
+          .await
+          .unwrap();
+      } else {
+        device.transfer_out(4, b"H").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        device.transfer_out(4, b"L").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        let recv = device.transfer_in(5, 64).await.unwrap();
+        let mut first_run = false;
+
+        match recv.as_slice() {
+          b"Sketch begins.\r\n> " => {
+            first_run = true;
+          }
+          b"H\r\nTurning LED on.\r\n> " => {}
+          _ => unreachable!(),
+        };
+        let recv = device.transfer_in(5, 64).await.unwrap();
+
+        match (first_run, recv.as_slice()) {
+          (true, b"H\r\nTurning LED on.\r\n> ")
+          | (false, b"L\r\nTurning LED off.\r\n> ") => {}
+          _ => unreachable!(),
+        };
+      }
+      device.release_interface(2).await.unwrap();
+      device.reset().await.unwrap();
+      device.close().await.unwrap();
     })
   }
 
   #[test]
-  fn test_device_control() -> crate::Result<()> {
-    arduino(|device| {
-      let device_descriptor_bytes = device.control_transfer_in(
-        crate::UsbControlTransferParameters {
-          request_type: crate::UsbRequestType::Standard,
-          recipient: crate::UsbRecipient::Device,
-          // kGetDescriptorRequest
-          request: 0x06,
-          // kDeviceDescriptorType
-          value: 0x01 << 8,
-          index: 0,
-        },
-        // kDeviceDescriptorLength
-        18,
-      )?;
+  fn test_device_control() {
+    block_on(async move {
+      let mut device = test_device().await;
 
-      assert_eq!(device_descriptor_bytes.len(), 18);
-      assert_eq!(device_descriptor_bytes[0], 18);
+      device.open().await.unwrap();
 
-      let bcd_usb = u16::from_le_bytes([
-        device_descriptor_bytes[2],
-        device_descriptor_bytes[3],
-      ]);
+      // Not part of public API.
+      // This is to ensure that the device is not busy.
+      device
+        .device_handle
+        .as_mut()
+        .unwrap()
+        .set_auto_detach_kernel_driver(true)
+        .unwrap();
 
-      assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
-      assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
-      assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
+      // A real world application should use `device.configuration.is_none()`.
+      match device.select_configuration(1).await {
+        Ok(_) => {} // Unreachable in the test runner
+        Err(crate::Error::Usb(rusb::Error::Busy))
+        | Err(crate::Error::InvalidState) => {}
+        _ => unreachable!(),
+      }
 
-      assert_eq!(device_descriptor_bytes[4], device.device_class);
-      assert_eq!(device_descriptor_bytes[5], device.device_subclass);
-      assert_eq!(device_descriptor_bytes[6], device.device_protocol);
+      // Device might be busy.
+      if device.claim_interface(2).await.is_ok() {
+        device.select_alternate_interface(2, 0).await.unwrap();
 
-      let vendor_id = u16::from_le_bytes([
-        device_descriptor_bytes[8],
-        device_descriptor_bytes[9],
-      ]);
+        device
+          .control_transfer_out(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Class,
+              recipient: crate::UsbRecipient::Interface,
+              request: 0x22,
+              value: 0x01,
+              index: 2,
+            },
+            &[],
+          )
+          .await
+          .unwrap();
 
-      assert_eq!(vendor_id, device.vendor_id);
+        let device_descriptor_bytes = device
+          .control_transfer_in(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Standard,
+              recipient: crate::UsbRecipient::Device,
+              // kGetDescriptorRequest
+              request: 0x06,
+              // kDeviceDescriptorType
+              value: 0x01 << 8,
+              index: 0,
+            },
+            // kDeviceDescriptorLength
+            18,
+          )
+          .await
+          .unwrap();
 
-      let product_id = u16::from_le_bytes([
-        device_descriptor_bytes[10],
-        device_descriptor_bytes[11],
-      ]);
+        assert_eq!(device_descriptor_bytes.len(), 18);
+        assert_eq!(device_descriptor_bytes[0], 18);
 
-      assert_eq!(product_id, device.product_id);
+        let bcd_usb = u16::from_le_bytes([
+          device_descriptor_bytes[2],
+          device_descriptor_bytes[3],
+        ]);
 
-      let bcd_device = u16::from_le_bytes([
-        device_descriptor_bytes[12],
-        device_descriptor_bytes[13],
-      ]);
+        assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
+        assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
+        assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
 
-      assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
-      assert_eq!(
-        ((bcd_device & 0xf0) >> 4) as u8,
-        device.device_version_minor
-      );
-      assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
+        assert_eq!(device_descriptor_bytes[4], device.device_class);
+        assert_eq!(device_descriptor_bytes[5], device.device_subclass);
+        assert_eq!(device_descriptor_bytes[6], device.device_protocol);
 
-      assert_eq!(
-        device_descriptor_bytes[17],
-        device.configurations.len() as u8
-      );
+        let vendor_id = u16::from_le_bytes([
+          device_descriptor_bytes[8],
+          device_descriptor_bytes[9],
+        ]);
 
-      Ok(())
+        assert_eq!(vendor_id, device.vendor_id);
+
+        let product_id = u16::from_le_bytes([
+          device_descriptor_bytes[10],
+          device_descriptor_bytes[11],
+        ]);
+
+        assert_eq!(product_id, device.product_id);
+
+        let bcd_device = u16::from_le_bytes([
+          device_descriptor_bytes[12],
+          device_descriptor_bytes[13],
+        ]);
+
+        assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
+        assert_eq!(
+          ((bcd_device & 0xf0) >> 4) as u8,
+          device.device_version_minor
+        );
+        assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
+
+        assert_eq!(
+          device_descriptor_bytes[17],
+          device.configurations.len() as u8
+        );
+
+        device
+          .control_transfer_out(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Class,
+              recipient: crate::UsbRecipient::Interface,
+              request: 0x22,
+              value: 0x00,
+              index: 2,
+            },
+            &[],
+          )
+          .await
+          .unwrap();
+      } else {
+        let device_descriptor_bytes = device
+          .control_transfer_in(
+            crate::UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Standard,
+              recipient: crate::UsbRecipient::Device,
+              // kGetDescriptorRequest
+              request: 0x06,
+              // kDeviceDescriptorType
+              value: 0x01 << 8,
+              index: 0,
+            },
+            // kDeviceDescriptorLength
+            18,
+          )
+          .await
+          .unwrap();
+
+        assert_eq!(device_descriptor_bytes.len(), 18);
+        assert_eq!(device_descriptor_bytes[0], 18);
+
+        let bcd_usb = u16::from_le_bytes([
+          device_descriptor_bytes[2],
+          device_descriptor_bytes[3],
+        ]);
+
+        assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
+        assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
+        assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
+
+        assert_eq!(device_descriptor_bytes[4], device.device_class);
+        assert_eq!(device_descriptor_bytes[5], device.device_subclass);
+        assert_eq!(device_descriptor_bytes[6], device.device_protocol);
+
+        let vendor_id = u16::from_le_bytes([
+          device_descriptor_bytes[8],
+          device_descriptor_bytes[9],
+        ]);
+
+        assert_eq!(vendor_id, device.vendor_id);
+
+        let product_id = u16::from_le_bytes([
+          device_descriptor_bytes[10],
+          device_descriptor_bytes[11],
+        ]);
+
+        assert_eq!(product_id, device.product_id);
+
+        let bcd_device = u16::from_le_bytes([
+          device_descriptor_bytes[12],
+          device_descriptor_bytes[13],
+        ]);
+
+        assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
+        assert_eq!(
+          ((bcd_device & 0xf0) >> 4) as u8,
+          device.device_version_minor
+        );
+        assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
+
+        assert_eq!(
+          device_descriptor_bytes[17],
+          device.configurations.len() as u8
+        );
+      }
+      device.release_interface(2).await.unwrap();
+      device.reset().await.unwrap();
+      device.close().await.unwrap();
     })
   }
 
-  #[flaky_test::flaky_test]
+  #[tokio::test]
+  #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
-  fn test_unimplemented() {
-    let mut device = test_device();
-
-    let result =
-      std::panic::catch_unwind(move || device.isochronous_transfer_in());
-    assert!(result.is_err());
-
-    let mut device = test_device();
-
-    let result =
-      std::panic::catch_unwind(move || device.isochronous_transfer_out());
-    assert!(result.is_err());
+  async fn test_unimplemented1() {
+    let mut device = test_device().await;
+    device.isochronous_transfer_in().await;
   }
 
-  #[test]
-  fn test_device_not_found() -> crate::Result<()> {
-    let mut device = test_device();
+  #[tokio::test]
+  #[should_panic]
+  // IMPORTANT! These are meant to fail when the methods are implemented.
+  async fn test_unimplemented2() {
+    let mut device = test_device().await;
+    device.isochronous_transfer_out().await;
+  }
 
-    device.open()?;
+  #[tokio::test]
+  async fn test_device_not_found() -> crate::Result<()> {
+    let mut device = test_device().await;
 
-    device.select_configuration(255).unwrap_err();
-    device.claim_interface(255).unwrap_err();
-    device.release_interface(255).unwrap_err();
-    device.select_alternate_interface(255, 0).unwrap_err();
+    device.open().await?;
 
-    device.close()?;
+    device.select_configuration(255).await.unwrap_err();
+    device.claim_interface(255).await.unwrap_err();
+    device.release_interface(255).await.unwrap_err();
+    device.select_alternate_interface(255, 0).await.unwrap_err();
+
+    device.close().await?;
     Ok(())
   }
 
