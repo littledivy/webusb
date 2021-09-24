@@ -981,7 +981,7 @@ impl UsbDevice {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
-enum UsbRequestType {
+pub enum UsbRequestType {
   Standard,
   Class,
   Vendor,
@@ -999,11 +999,11 @@ pub enum UsbRecipient {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UsbControlTransferParameters {
-  request_type: UsbRequestType,
-  recipient: UsbRecipient,
-  request: u8,
-  value: u16,
-  index: u16,
+  pub request_type: UsbRequestType,
+  pub recipient: UsbRecipient,
+  pub request: u8,
+  pub value: u16,
+  pub index: u16,
 }
 
 #[cfg(feature = "wasm")]
@@ -1213,12 +1213,12 @@ pub struct Context(rusb::Context);
 
 #[cfg(feature = "libusb")]
 impl Context {
-  fn init() -> Result<Self> {
+  pub fn init() -> Result<Self> {
     let ctx = rusb::Context::new()?;
     Ok(Self(ctx))
   }
 
-  async fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
     let devices = self.0.devices()?;
 
     let usb_devices: Vec<UsbDevice> = devices
