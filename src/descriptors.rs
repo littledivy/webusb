@@ -35,6 +35,7 @@ pub(crate) fn parse_bos(bytes: &[u8]) -> Option<(u8, u8)> {
     bytes = &bytes[length..];
 
     assert_return!(i == end);
+    assert_return!(bytes.len() <= 0);
 
     length = bytes[0] as usize;
     // bLength
@@ -122,6 +123,38 @@ mod tests {
 
   #[test]
   fn test_bad_parse_bos() {
+    // Too short
+    assert_eq!(parse_bos(&[0x03, 0x0F, 0x03]), None);
+
+    // bLength too large
+    assert_eq!(parse_bos(&[0x06, 0x0F, 0x05, 0x00, 0x01]), None);
+
+    // wTotalLength less than bLength
+    assert_eq!(parse_bos(&[0x05, 0x0F, 0x04, 0x00, 0x01]), None);
+
+    // wTotalLength too large
+    assert_eq!(parse_bos(&[0x05, 0x0F, 0x06, 0x00, 0x01]), None);
+
+    // bNumDeviceCaps == 1 but there are no actual descriptors
+    assert_eq!(parse_bos(&[0x05, 0x0F, 0x05, 0x00, 0x01]), None);
+
+    // the single capability descriptor too short
+    assert_eq!(parse_bos(&[0x05, 0x0F, 0x06, 0x00, 0x01, 0x02, 0x10]), None);
+
+    // The bLength on a capability descriptor in the BOS descriptor is longer than
+    // the remaining space defined by wTotalLength
+    assert_eq!(
+      parse_bos(&[0x05, 0x0F, 0x08, 0x00, 0x01, 0x04, 0x10, 0x05]),
+      None
+    );
+
+    // There is something other than a device capability descriptor in the BOS
+    // descriptor
+    assert_eq!(
+      parse_bos(&[0x05, 0x0F, 0x08, 0x00, 0x01, 0x03, 0x0F, 0x05]),
+      None
+    );
+
     assert_eq!(
       // Platform capability descriptor is too short for a UUID
       parse_bos(&[
@@ -194,6 +227,4 @@ mod tests {
     url[2] = 0x09; // Invalid protocol
     assert_eq!(parse_webusb_url(&url), None);
   }
-
-  // TODO(@littledivy): Import more tests from https://source.chromium.org/chromium/chromium/src/+/main:services/device/usb/webusb_descriptors_unittest.cc
 }

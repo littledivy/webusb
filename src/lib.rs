@@ -1,3 +1,24 @@
+//! # webusb
+//!
+//! Implementation of the [WebUSB API specification](https://wicg.github.io/webusb/) in
+//! Rust.
+//!
+//! ## Design
+//!
+//! The crate is designed to be as close to the WebUSB specification as possible.
+//! There are two "backends" available, Native and WASM.
+//!
+//! The native backend (`libusb`) supports parsing webusb descriptors. The wasm backend will
+//! make use of the runtime's WebUSB implementation.
+//!
+//! see [usbd-webusb](https://github.com/redpfire/usbd-webusb) for WebUSB compatible firmware
+//! for the device.
+//!
+//! ## Usage
+//!
+//! See [webusb/examples](https://github.com/littledivy/webusb/tree/main/examples) for usage examples.
+//!
+
 use serde::Deserialize;
 use serde::Serialize;
 
