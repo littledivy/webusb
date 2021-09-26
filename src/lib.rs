@@ -19,7 +19,9 @@
 //! See [webusb/examples](https://github.com/littledivy/webusb/tree/main/examples) for usage examples.
 //!
 
+#[cfg(feature = "serde_derive")]
 use serde::Deserialize;
+#[cfg(feature = "serde_derive")]
 use serde::Serialize;
 
 #[cfg(feature = "libusb")]
@@ -69,8 +71,12 @@ impl<T> From<Option<T>> for Error {
   }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbConfiguration {
   // Index of String Descriptor describing this configuration.
   configuration_name: Option<String>,
@@ -119,8 +125,12 @@ impl UsbConfiguration {
   }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbInterface {
   interface_number: u8,
   alternate: UsbAlternateInterface,
@@ -174,8 +184,12 @@ impl UsbInterface {
   }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub enum UsbEndpointType {
   Bulk,
   Interrupt,
@@ -183,15 +197,23 @@ pub enum UsbEndpointType {
   Control,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, PartialEq)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "lowercase")
+)]
 pub enum Direction {
   In,
   Out,
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbEndpoint {
   endpoint_number: u8,
   direction: Direction,
@@ -221,8 +243,12 @@ impl From<web_sys::UsbEndpoint> for UsbEndpoint {
   }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbAlternateInterface {
   alternate_setting: u8,
   interface_class: u8,
@@ -289,40 +315,83 @@ impl UsbAlternateInterface {
   }
 }
 
-/// Represents a WebUSB UsbDevice.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Represents a UsbDevice.
+/// Only way you can obtain one is through `Context::devices`
+/// https://wicg.github.io/webusb/#device-usage
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbDevice {
+  /// List of configurations supported by the device.
+  /// Populated from the configuration descriptor.
+  /// `configurations.len()` SHALL be equal to the
+  /// bNumConfigurations field of the device descriptor.
   pub configurations: Vec<UsbConfiguration>,
+  /// Represents the currently selected configuration.
+  /// One of the elements of `self.configurations`.
+  /// None, if the device is not configured.
   pub configuration: Option<UsbConfiguration>,
+  /// bDeviceClass value of the device descriptor.
   pub device_class: u8,
+  /// bDeviceSubClass value of the device descriptor.
   pub device_subclass: u8,
+  /// bDeviceProtocol value of the device descriptor.
   pub device_protocol: u8,
+  /// The major version declared by bcdDevice field
+  /// such that bcdDevice 0xJJMN represents major version JJ.
   pub device_version_major: u8,
+  /// The minor version declared by bcdDevice field
+  /// such that bcdDevice 0xJJMN represents minor version M.
   pub device_version_minor: u8,
+  /// The subminor version declared by bcdDevice field
+  /// such that bcdDevice 0xJJMN represents subminor version N.
   pub device_version_subminor: u8,
+  /// Optional property of the string descriptor.
+  /// Indexed by the iManufacturer field of device descriptor.
   pub manufacturer_name: Option<String>,
+  /// idProduct field of the device descriptor.
   pub product_id: u16,
+  /// Optional property of the string descriptor.
+  /// Indexed by the iProduct field of device descriptor.
   pub product_name: Option<String>,
+  /// Optional property of the string descriptor.
+  /// None, if the iSerialNumber field of device descriptor
+  /// is 0.
   pub serial_number: Option<String>,
+  /// The major version declared by bcdUSB field
+  /// such that bcdUSB 0xJJMN represents major version JJ.
   pub usb_version_major: u8,
+  /// The minor version declared by bcdUSB field
+  /// such that bcdUSB 0xJJMN represents minor version M.
   pub usb_version_minor: u8,
+  /// The subminor version declared by bcdUSB field
+  /// such that bcdUSB 0xJJMN represents subminor version N.
   pub usb_version_subminor: u8,
+  /// idVendor field of the device descriptor. 
+  /// https://wicg.github.io/webusb/#vendor-id
   pub vendor_id: u16,
+  /// If true, the underlying device handle is owned by this object.
   pub opened: bool,
-  /// The `WEBUSB_URL` value. Present in devices with the WebUSB Platform Capability Descriptor.
-  #[serde(skip)]
+
+  /// WEBUSB_URL value of the WebUSB Platform Capability Descriptor.
+  #[cfg_attr(
+    feature = "serde_derive",
+    doc = "NOTE: Skipped during serde deserialization.",
+    serde(skip)
+  )]
   pub url: Option<String>,
 
-  #[serde(skip)]
+  #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
   device: rusb::Device<rusb::Context>,
 
-  #[serde(skip)]
+  #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "wasm")]
   device: web_sys::UsbDevice,
 
-  #[serde(skip)]
+  #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
 }
@@ -1000,16 +1069,24 @@ impl UsbDevice {
   }
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "lowercase")
+)]
 pub enum UsbRequestType {
   Standard,
   Class,
   Vendor,
 }
 
-#[derive(Serialize, Clone, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, PartialEq)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "lowercase")
+)]
 pub enum UsbRecipient {
   Device,
   Interface,
@@ -1017,8 +1094,12 @@ pub enum UsbRecipient {
   Other,
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone)]
+#[cfg_attr(
+  feature = "serde_derive",
+  derive(Serialize, Deserialize),
+  serde(rename_all = "camelCase")
+)]
 pub struct UsbControlTransferParameters {
   pub request_type: UsbRequestType,
   pub recipient: UsbRecipient,

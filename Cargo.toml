@@ -15,6 +15,7 @@ keywords = [
 default = ["libusb"]
 wasm = ["web-sys", "js-sys", "wasm-bindgen", "wasm-bindgen-futures"]
 libusb = ["rusb", "libusb1-sys"]
+serde_derive = ["serde"]
 
 [dependencies]
 rusb = { version = "0.8.1", optional = true }
@@ -23,7 +24,7 @@ web-sys = { version = "0.3.55", features = ["Window", "Navigator", "Usb", "UsbDe
 js-sys = { version = "0.3.55", optional = true }
 wasm-bindgen-futures = { version = "0.4.28", optional = true }
 wasm-bindgen = { version = "0.2.78", optional = true }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 # For a loose connection :-)
