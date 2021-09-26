@@ -369,7 +369,7 @@ pub struct UsbDevice {
   /// The subminor version declared by bcdUSB field
   /// such that bcdUSB 0xJJMN represents subminor version N.
   pub usb_version_subminor: u8,
-  /// idVendor field of the device descriptor. 
+  /// idVendor field of the device descriptor.
   /// https://wicg.github.io/webusb/#vendor-id
   pub vendor_id: u16,
   /// If true, the underlying device handle is owned by this object.
@@ -1349,9 +1349,11 @@ mod tests {
   use crate::Context;
   use crate::Direction;
   use crate::Error;
+  use crate::UsbControlTransferParameters;
   use crate::UsbDevice;
+  use crate::UsbRecipient;
+  use crate::UsbRequestType;
 
-  use std::sync::mpsc::channel;
   use std::sync::Arc;
   use std::sync::Mutex;
   use std::thread;
@@ -1401,7 +1403,7 @@ mod tests {
 
     device
       .control_transfer_out(
-        crate::UsbControlTransferParameters {
+        UsbControlTransferParameters {
           request_type: crate::UsbRequestType::Class,
           recipient: crate::UsbRecipient::Interface,
           request: 0x22,
@@ -1420,7 +1422,7 @@ mod tests {
 
     device
       .control_transfer_out(
-        crate::UsbControlTransferParameters {
+        UsbControlTransferParameters {
           request_type: crate::UsbRequestType::Class,
           recipient: crate::UsbRecipient::Interface,
           request: 0x22,
@@ -1451,6 +1453,31 @@ mod tests {
   #[flaky_test::flaky_test]
   fn test_device_blink() {
     block_on(async move {
+      async fn test(device: &mut UsbDevice) {
+        device.transfer_out(4, b"H").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        device.transfer_out(4, b"L").await.unwrap();
+        device.clear_halt(Direction::Out, 4).await.unwrap();
+
+        let recv = device.transfer_in(5, 64).await.unwrap();
+        let mut first_run = false;
+
+        match recv.as_slice() {
+          b"Sketch begins.\r\n> " => {
+            first_run = true;
+          }
+          b"H\r\nTurning LED on.\r\n> " => {}
+          _ => unreachable!(),
+        };
+        let recv = device.transfer_in(5, 64).await.unwrap();
+
+        match (first_run, recv.as_slice()) {
+          (true, b"H\r\nTurning LED on.\r\n> ")
+          | (false, b"L\r\nTurning LED off.\r\n> ") => {}
+          _ => unreachable!(),
+        };
+      }
       let mut device = test_device().await;
 
       device.open().await.unwrap();
@@ -1478,7 +1505,7 @@ mod tests {
 
         device
           .control_transfer_out(
-            crate::UsbControlTransferParameters {
+            UsbControlTransferParameters {
               request_type: crate::UsbRequestType::Class,
               recipient: crate::UsbRecipient::Interface,
               request: 0x22,
@@ -1489,34 +1516,10 @@ mod tests {
           )
           .await
           .unwrap();
-
-        device.transfer_out(4, b"H").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
-
-        device.transfer_out(4, b"L").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
-
-        let recv = device.transfer_in(5, 64).await.unwrap();
-        let mut first_run = false;
-
-        match recv.as_slice() {
-          b"Sketch begins.\r\n> " => {
-            first_run = true;
-          }
-          b"H\r\nTurning LED on.\r\n> " => {}
-          _ => unreachable!(),
-        };
-        let recv = device.transfer_in(5, 64).await.unwrap();
-
-        match (first_run, recv.as_slice()) {
-          (true, b"H\r\nTurning LED on.\r\n> ")
-          | (false, b"L\r\nTurning LED off.\r\n> ") => {}
-          _ => unreachable!(),
-        };
-
+        test(&mut device).await;
         device
           .control_transfer_out(
-            crate::UsbControlTransferParameters {
+            UsbControlTransferParameters {
               request_type: crate::UsbRequestType::Class,
               recipient: crate::UsbRecipient::Interface,
               request: 0x22,
@@ -1528,29 +1531,7 @@ mod tests {
           .await
           .unwrap();
       } else {
-        device.transfer_out(4, b"H").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
-
-        device.transfer_out(4, b"L").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
-
-        let recv = device.transfer_in(5, 64).await.unwrap();
-        let mut first_run = false;
-
-        match recv.as_slice() {
-          b"Sketch begins.\r\n> " => {
-            first_run = true;
-          }
-          b"H\r\nTurning LED on.\r\n> " => {}
-          _ => unreachable!(),
-        };
-        let recv = device.transfer_in(5, 64).await.unwrap();
-
-        match (first_run, recv.as_slice()) {
-          (true, b"H\r\nTurning LED on.\r\n> ")
-          | (false, b"L\r\nTurning LED off.\r\n> ") => {}
-          _ => unreachable!(),
-        };
+        test(&mut device).await;
       }
       device.release_interface(2).await.unwrap();
       device.reset().await.unwrap();
@@ -1561,6 +1542,71 @@ mod tests {
   #[test]
   fn test_device_control() {
     block_on(async move {
+      async fn test(device: &mut UsbDevice) {
+        let device_descriptor_bytes = device
+          .control_transfer_in(
+            UsbControlTransferParameters {
+              request_type: crate::UsbRequestType::Standard,
+              recipient: crate::UsbRecipient::Device,
+              // kGetDescriptorRequest
+              request: 0x06,
+              // kDeviceDescriptorType
+              value: 0x01 << 8,
+              index: 0,
+            },
+            // kDeviceDescriptorLength
+            18,
+          )
+          .await
+          .unwrap();
+
+        assert_eq!(device_descriptor_bytes.len(), 18);
+        assert_eq!(device_descriptor_bytes[0], 18);
+
+        let bcd_usb = u16::from_le_bytes([
+          device_descriptor_bytes[2],
+          device_descriptor_bytes[3],
+        ]);
+
+        assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
+        assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
+        assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
+
+        assert_eq!(device_descriptor_bytes[4], device.device_class);
+        assert_eq!(device_descriptor_bytes[5], device.device_subclass);
+        assert_eq!(device_descriptor_bytes[6], device.device_protocol);
+
+        let vendor_id = u16::from_le_bytes([
+          device_descriptor_bytes[8],
+          device_descriptor_bytes[9],
+        ]);
+
+        assert_eq!(vendor_id, device.vendor_id);
+
+        let product_id = u16::from_le_bytes([
+          device_descriptor_bytes[10],
+          device_descriptor_bytes[11],
+        ]);
+
+        assert_eq!(product_id, device.product_id);
+
+        let bcd_device = u16::from_le_bytes([
+          device_descriptor_bytes[12],
+          device_descriptor_bytes[13],
+        ]);
+
+        assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
+        assert_eq!(
+          ((bcd_device & 0xf0) >> 4) as u8,
+          device.device_version_minor
+        );
+        assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
+
+        assert_eq!(
+          device_descriptor_bytes[17],
+          device.configurations.len() as u8
+        );
+      }
       let mut device = test_device().await;
 
       device.open().await.unwrap();
@@ -1588,7 +1634,7 @@ mod tests {
 
         device
           .control_transfer_out(
-            crate::UsbControlTransferParameters {
+            UsbControlTransferParameters {
               request_type: crate::UsbRequestType::Class,
               recipient: crate::UsbRecipient::Interface,
               request: 0x22,
@@ -1599,74 +1645,10 @@ mod tests {
           )
           .await
           .unwrap();
-
-        let device_descriptor_bytes = device
-          .control_transfer_in(
-            crate::UsbControlTransferParameters {
-              request_type: crate::UsbRequestType::Standard,
-              recipient: crate::UsbRecipient::Device,
-              // kGetDescriptorRequest
-              request: 0x06,
-              // kDeviceDescriptorType
-              value: 0x01 << 8,
-              index: 0,
-            },
-            // kDeviceDescriptorLength
-            18,
-          )
-          .await
-          .unwrap();
-
-        assert_eq!(device_descriptor_bytes.len(), 18);
-        assert_eq!(device_descriptor_bytes[0], 18);
-
-        let bcd_usb = u16::from_le_bytes([
-          device_descriptor_bytes[2],
-          device_descriptor_bytes[3],
-        ]);
-
-        assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
-        assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
-        assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
-
-        assert_eq!(device_descriptor_bytes[4], device.device_class);
-        assert_eq!(device_descriptor_bytes[5], device.device_subclass);
-        assert_eq!(device_descriptor_bytes[6], device.device_protocol);
-
-        let vendor_id = u16::from_le_bytes([
-          device_descriptor_bytes[8],
-          device_descriptor_bytes[9],
-        ]);
-
-        assert_eq!(vendor_id, device.vendor_id);
-
-        let product_id = u16::from_le_bytes([
-          device_descriptor_bytes[10],
-          device_descriptor_bytes[11],
-        ]);
-
-        assert_eq!(product_id, device.product_id);
-
-        let bcd_device = u16::from_le_bytes([
-          device_descriptor_bytes[12],
-          device_descriptor_bytes[13],
-        ]);
-
-        assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
-        assert_eq!(
-          ((bcd_device & 0xf0) >> 4) as u8,
-          device.device_version_minor
-        );
-        assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
-
-        assert_eq!(
-          device_descriptor_bytes[17],
-          device.configurations.len() as u8
-        );
-
+        test(&mut device).await;
         device
           .control_transfer_out(
-            crate::UsbControlTransferParameters {
+            UsbControlTransferParameters {
               request_type: crate::UsbRequestType::Class,
               recipient: crate::UsbRecipient::Interface,
               request: 0x22,
@@ -1678,69 +1660,7 @@ mod tests {
           .await
           .unwrap();
       } else {
-        let device_descriptor_bytes = device
-          .control_transfer_in(
-            crate::UsbControlTransferParameters {
-              request_type: crate::UsbRequestType::Standard,
-              recipient: crate::UsbRecipient::Device,
-              // kGetDescriptorRequest
-              request: 0x06,
-              // kDeviceDescriptorType
-              value: 0x01 << 8,
-              index: 0,
-            },
-            // kDeviceDescriptorLength
-            18,
-          )
-          .await
-          .unwrap();
-
-        assert_eq!(device_descriptor_bytes.len(), 18);
-        assert_eq!(device_descriptor_bytes[0], 18);
-
-        let bcd_usb = u16::from_le_bytes([
-          device_descriptor_bytes[2],
-          device_descriptor_bytes[3],
-        ]);
-
-        assert_eq!((bcd_usb >> 8) as u8, device.usb_version_major);
-        assert_eq!(((bcd_usb & 0xf0) >> 4) as u8, device.usb_version_minor);
-        assert_eq!((bcd_usb & 0xf) as u8, device.usb_version_subminor);
-
-        assert_eq!(device_descriptor_bytes[4], device.device_class);
-        assert_eq!(device_descriptor_bytes[5], device.device_subclass);
-        assert_eq!(device_descriptor_bytes[6], device.device_protocol);
-
-        let vendor_id = u16::from_le_bytes([
-          device_descriptor_bytes[8],
-          device_descriptor_bytes[9],
-        ]);
-
-        assert_eq!(vendor_id, device.vendor_id);
-
-        let product_id = u16::from_le_bytes([
-          device_descriptor_bytes[10],
-          device_descriptor_bytes[11],
-        ]);
-
-        assert_eq!(product_id, device.product_id);
-
-        let bcd_device = u16::from_le_bytes([
-          device_descriptor_bytes[12],
-          device_descriptor_bytes[13],
-        ]);
-
-        assert_eq!((bcd_device >> 8) as u8, device.device_version_major);
-        assert_eq!(
-          ((bcd_device & 0xf0) >> 4) as u8,
-          device.device_version_minor
-        );
-        assert_eq!((bcd_device & 0xf) as u8, device.device_version_subminor);
-
-        assert_eq!(
-          device_descriptor_bytes[17],
-          device.configurations.len() as u8
-        );
+        test(&mut device).await;
       }
       device.release_interface(2).await.unwrap();
       device.reset().await.unwrap();
@@ -1777,6 +1697,29 @@ mod tests {
 
     device.close().await?;
     Ok(())
+  }
+
+  #[tokio::test]
+  async fn test_validate_control_setup() {
+    let mut device = test_device().await;
+    device.open().await.unwrap();
+
+    fn standard_ctrl_req(device: &mut UsbDevice) -> crate::Result<()> {
+      device.validate_control_setup(&UsbControlTransferParameters {
+        request_type: UsbRequestType::Class,
+        recipient: UsbRecipient::Interface,
+        request: 0x22,
+        value: 0x01,
+        index: 2,
+      })
+    }
+
+    // Interface is not claimed.
+    standard_ctrl_req(&mut device).unwrap_err();
+
+    // Interface is claimed and selected.
+    device.claim_interface(2).await.unwrap();
+    standard_ctrl_req(&mut device).unwrap();
   }
 
   #[test]
