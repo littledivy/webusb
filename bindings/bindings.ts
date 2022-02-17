@@ -22,27 +22,32 @@ const opts = {
   policy: CachePolicy.NONE,
 }
 const _lib = await prepare(opts, {})
-export type UsbConfiguration = {
-  configurationName: string | undefined | null
-  configurationValue: number
-  interfaces: Array<UsbInterface>
+export type UsbInterface = {
+  interfaceNumber: number
+  alternate: UsbAlternateInterface
+  alternates: Array<UsbAlternateInterface>
+  claimed: boolean
 }
 export type Direction =
   | "in"
   | "out"
+export type UsbRecipient =
+  | "device"
+  | "interface"
+  | "endpoint"
+  | "other"
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
 }
-export type UsbAlternateInterface = {
-  alternateSetting: number
-  interfaceClass: number
-  interfaceSubclass: number
-  interfaceProtocol: number
-  interfaceName: string | undefined | null
-  endpoints: Array<UsbEndpoint>
+export type UsbControlTransferParameters = {
+  requestType: UsbRequestType
+  recipient: UsbRecipient
+  request: number
+  value: number
+  index: number
 }
 /**
  * Represents a UsbDevice.
@@ -146,28 +151,23 @@ export type UsbDevice = {
   device: UsbDevice
   deviceHandle: DeviceHandle<Context> | undefined | null
 }
-export type UsbInterface = {
-  interfaceNumber: number
-  alternate: UsbAlternateInterface
-  alternates: Array<UsbAlternateInterface>
-  claimed: boolean
+export type UsbConfiguration = {
+  configurationName: string | undefined | null
+  configurationValue: number
+  interfaces: Array<UsbInterface>
+}
+export type UsbAlternateInterface = {
+  alternateSetting: number
+  interfaceClass: number
+  interfaceSubclass: number
+  interfaceProtocol: number
+  interfaceName: string | undefined | null
+  endpoints: Array<UsbEndpoint>
 }
 export type UsbRequestType =
   | "standard"
   | "class"
   | "vendor"
-export type UsbControlTransferParameters = {
-  requestType: UsbRequestType
-  recipient: UsbRecipient
-  request: number
-  value: number
-  index: number
-}
-export type UsbRecipient =
-  | "device"
-  | "interface"
-  | "endpoint"
-  | "other"
 export type UsbEndpointType =
   | "bulk"
   | "interrupt"

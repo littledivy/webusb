@@ -28,6 +28,8 @@ use serde::Serialize;
 #[cfg(feature = "deno_ffi")]
 use serde::Serialize;
 
+use std::ops::DerefMut;
+
 #[cfg(feature = "libusb")]
 use rusb::UsbContext;
 
@@ -195,7 +197,7 @@ impl UsbInterface {
   }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 #[cfg_attr(
   feature = "serde_derive",
   derive(Serialize, Deserialize),
@@ -503,8 +505,18 @@ impl UsbDevice {
     // 4.
     #[cfg(feature = "libusb")]
     {
-      let handle = self.device.open()?;
-      self.device_handle = Some(handle);
+      #[cfg(feature = "deno_ffi")]
+      let handle = ffi::get_device(self.rid)
+        .map_err(|_| Error::NotFound)?
+        .deref_mut()
+        .device
+        .open()?;
+
+      #[cfg(not(feature = "deno_ffi"))]
+      {
+        let handle = self.device.open()?;
+        self.device_handle = Some(handle);
+      }
     }
 
     #[cfg(feature = "wasm")]
@@ -526,7 +538,7 @@ impl UsbDevice {
 
     #[cfg(feature = "libusb")]
     {
-      match &self.device_handle {
+      match self.get_device_handle() {
         Some(handle_ref) => {
           // 5-6.
           // release claimed interfaces, close device and release handle
@@ -535,7 +547,10 @@ impl UsbDevice {
         None => unreachable!(),
       };
 
-      self.device_handle = None;
+      #[cfg(not(feature = "deno_ffi"))]
+      {
+        self.device_handle = None;
+      }
     }
 
     #[cfg(feature = "wasm")]
@@ -569,7 +584,15 @@ impl UsbDevice {
         .iter()
         .position(|c| c.configuration_value == configuration_value)
       {
-        Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
+        Some(config_idx) => {
+          #[cfg(not(feature = "deno_ffi"))]
+          let dev = &self.device;
+
+          #[cfg(feature = "deno_ffi")]
+          let dev = &ffi::get_device(self.rid).unwrap().device;
+
+          dev.config_descriptor(config_idx as u8)?
+        }
         None => return Err(Error::NotFound),
       };
 
@@ -579,7 +602,7 @@ impl UsbDevice {
       }
 
       // 5-6.
-      let handle = match self.device_handle {
+      let handle = match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           // Calls `libusb_set_configuration`
           handle_ref.set_active_configuration(configuration_value)?;
@@ -595,6 +618,20 @@ impl UsbDevice {
     Ok(())
   }
 
+  #[cfg(feature = "libusb")]
+  fn get_device_handle(
+    &mut self,
+  ) -> &mut Option<rusb::DeviceHandle<rusb::Context>> {
+    #[cfg(feature = "deno_ffi")]
+    return match ffi::get_device(self.rid) {
+      Ok(mut device) => &mut device.device_handle,
+      Err(_) => &mut None,
+    };
+
+    #[cfg(not(feature = "deno_ffi"))]
+    return &mut self.device_handle;
+  }
+
   pub async fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
@@ -606,17 +643,16 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 2.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
       let mut interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
-
       // 3.
       if !self.opened {
         return Err(Error::InvalidState);
@@ -626,17 +662,16 @@ impl UsbDevice {
       if interface.claimed {
         return Ok(());
       }
+      // 6.
+      interface.claimed = true;
 
       // 5.
-      match self.device_handle {
+      match self.get_device_handle() {
         Some(ref mut handle_ref) => {
-          handle_ref.claim_interface(interface.interface_number)?;
+          handle_ref.claim_interface(interface_number)?;
         }
         None => unreachable!(),
       };
-
-      // 6.
-      interface.claimed = true;
     }
 
     Ok(())
@@ -655,14 +690,14 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 3.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
       let mut interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
 
@@ -676,16 +711,16 @@ impl UsbDevice {
         return Ok(());
       }
 
+      // 6.
+      interface.claimed = false;
+
       // 5.
-      match self.device_handle {
+      match self.get_device_handle() {
         Some(ref mut handle_ref) => {
-          handle_ref.release_interface(interface.interface_number)?;
+          handle_ref.release_interface(interface_number)?;
         }
         None => unreachable!(),
       };
-
-      // 6.
-      interface.claimed = false;
     }
 
     Ok(())
@@ -707,14 +742,14 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 3.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
-      let mut interface = match active_configuration
+      let interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
 
@@ -724,12 +759,10 @@ impl UsbDevice {
       }
 
       // 5-6.
-      match self.device_handle {
+      match self.get_device_handle() {
         Some(ref mut handle_ref) => {
-          handle_ref.set_alternate_setting(
-            interface.interface_number,
-            alternate_setting,
-          )?;
+          handle_ref
+            .set_alternate_setting(interface_number, alternate_setting)?;
         }
         None => unreachable!(),
       };
@@ -763,7 +796,7 @@ impl UsbDevice {
       let mut buffer = vec![0u8; length];
 
       // 6-7.
-      let bytes_transferred = match self.device_handle {
+      let bytes_transferred = match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -827,7 +860,7 @@ impl UsbDevice {
       self.validate_control_setup(&setup)?;
 
       // 4-8.
-      let bytes_written = match self.device_handle {
+      let bytes_written = match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -905,7 +938,7 @@ impl UsbDevice {
       }
 
       // 4-5.
-      match self.device_handle {
+      match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           let mut endpoint = endpoint_number;
 
@@ -968,11 +1001,12 @@ impl UsbDevice {
       let mut buffer = vec![0u8; length];
 
       // 7-8.
-      let bytes_transferred = match self.device_handle {
+      let ty = endpoint.r#type;
+      let bytes_transferred = match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_IN | endpoint_number;
 
-          match endpoint.r#type {
+          match ty {
             UsbEndpointType::Bulk => handle_ref.read_bulk(
               endpoint_addr,
               &mut buffer,
@@ -1042,11 +1076,12 @@ impl UsbDevice {
       }
 
       // 5.
-      let bytes_written = match self.device_handle {
+      let ty = endpoint.r#type;
+      let bytes_written = match self.get_device_handle() {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_OUT | endpoint_number;
 
-          match endpoint.r#type {
+          match ty {
             UsbEndpointType::Bulk => handle_ref.write_bulk(
               endpoint_addr,
               data,
@@ -1082,7 +1117,7 @@ impl UsbDevice {
       }
 
       // 4-6.
-      match self.device_handle {
+      match self.get_device_handle() {
         Some(ref mut handle_ref) => handle_ref.reset()?,
         None => unreachable!(),
       };
@@ -1277,6 +1312,9 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       .read_serial_number_string_ascii(&device_descriptor)
       .ok();
 
+    #[cfg(feature = "deno_ffi")]
+    let rid = 0; // TODO
+
     let usb_device = UsbDevice {
       configurations,
       configuration,
@@ -1296,9 +1334,16 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       serial_number,
       opened: false,
       url,
+      #[cfg(not(feature = "deno_ffi"))]
       device,
+      #[cfg(not(feature = "deno_ffi"))]
       device_handle: None,
+      #[cfg(feature = "deno_ffi")]
+      rid, // TODO
     };
+
+    #[cfg(feature = "deno_ffi")]
+    ffi::insert_device(rid, device);
 
     // Explicitly close the device.
     drop(handle);
