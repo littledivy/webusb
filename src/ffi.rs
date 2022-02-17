@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
+use crate::Direction;
+use crate::UsbControlTransferParameters;
 use crate::UsbDevice;
 
 pub struct DeviceResource {
@@ -41,6 +43,11 @@ pub struct Devices {
 #[deno_bindgen]
 pub struct Device {
   device: UsbDevice,
+}
+
+#[deno_bindgen]
+pub struct FfiDirection {
+  inner: Direction,
 }
 
 #[deno_bindgen(non_blocking)]
@@ -85,11 +92,43 @@ pub fn transfer_in(
 #[deno_bindgen]
 pub fn clear_halt(
   mut device: Device,
-  direction: Direction,
+  direction: FfiDirection,
   endpoint_number: u8,
-) {
+) -> Device {
   device
     .device
-    .clear_halt(direction, endpoint_number)
+    .clear_halt(direction.inner, endpoint_number)
     .unwrap();
+  device
+}
+
+#[deno_bindgen]
+pub struct FfiUsbControlTransferParameters {
+  inner: UsbControlTransferParameters,
+}
+
+pub fn control_transfer_out(
+  mut device: Device,
+  setup: FfiUsbControlTransferParameters,
+  data: &[u8],
+) -> usize {
+  device
+    .device
+    .control_transfer_out(setup.inner, data)
+    .unwrap()
+}
+
+pub fn control_transfer_in(
+  mut device: Device,
+  setup: FfiUsbControlTransferParameters,
+  length: usize,
+) -> *const u8 {
+  let data = device
+    .device
+    .control_transfer_in(setup.inner, length)
+    .unwrap();
+  let ptr = data.as_ptr();
+  // TODO: deallocate from JS
+  std::mem::forget(data);
+  ptr
 }
