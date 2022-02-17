@@ -21,8 +21,14 @@
 
 #[cfg(feature = "serde_derive")]
 use serde::Deserialize;
+#[cfg(feature = "deno_ffi")]
+use serde::Deserialize;
 #[cfg(feature = "serde_derive")]
 use serde::Serialize;
+#[cfg(feature = "deno_ffi")]
+use serde::Serialize;
+
+use std::ops::DerefMut;
 
 #[cfg(feature = "libusb")]
 use rusb::UsbContext;
@@ -37,11 +43,16 @@ pub use web_sys;
 
 pub mod constants;
 mod descriptors;
+#[cfg(feature = "deno_ffi")]
+pub mod ffi;
 
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
 use crate::descriptors::parse_webusb_url;
+
+#[cfg(feature = "deno_ffi")]
+use deno_bindgen::deno_bindgen;
 
 const EP_DIR_IN: u8 = 0x80;
 const EP_DIR_OUT: u8 = 0x0;
@@ -77,6 +88,7 @@ impl<T> From<Option<T>> for Error {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbConfiguration {
   // Index of String Descriptor describing this configuration.
   configuration_name: Option<String>,
@@ -131,6 +143,7 @@ impl UsbConfiguration {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbInterface {
   interface_number: u8,
   alternate: UsbAlternateInterface,
@@ -184,12 +197,13 @@ impl UsbInterface {
   }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 #[cfg_attr(
   feature = "serde_derive",
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub enum UsbEndpointType {
   Bulk,
   Interrupt,
@@ -203,6 +217,7 @@ pub enum UsbEndpointType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum Direction {
   In,
   Out,
@@ -214,6 +229,7 @@ pub enum Direction {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbEndpoint {
   endpoint_number: u8,
   direction: Direction,
@@ -249,13 +265,14 @@ impl From<web_sys::UsbEndpoint> for UsbEndpoint {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbAlternateInterface {
-  alternate_setting: u8,
-  interface_class: u8,
-  interface_subclass: u8,
-  interface_protocol: u8,
-  interface_name: Option<String>,
-  endpoints: Vec<UsbEndpoint>,
+  pub alternate_setting: u8,
+  pub interface_class: u8,
+  pub interface_subclass: u8,
+  pub interface_protocol: u8,
+  pub interface_name: Option<String>,
+  pub endpoints: Vec<UsbEndpoint>,
 }
 
 #[cfg(feature = "wasm")]
@@ -315,6 +332,28 @@ impl UsbAlternateInterface {
   }
 }
 
+#[cfg(feature = "deno_ffi")]
+macro_rules! get_device_handle {
+  ($self: expr) => {
+    ffi::RESOURCES
+      .lock()
+      .unwrap()
+      .get_mut(&$self.rid)
+      .unwrap()
+      .lock()
+      .unwrap()
+      .device_handle
+      .as_mut()
+  };
+}
+
+#[cfg(not(feature = "deno_ffi"))]
+macro_rules! get_device_handle {
+  ($self: expr) => {
+    $self.device_handle.as_mut()
+  };
+}
+
 /// Represents a UsbDevice.
 /// Only way you can obtain one is through `Context::devices`
 /// https://wicg.github.io/webusb/#device-usage
@@ -323,6 +362,7 @@ impl UsbAlternateInterface {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbDevice {
   /// List of configurations supported by the device.
   /// Populated from the configuration descriptor.
@@ -383,8 +423,13 @@ pub struct UsbDevice {
   )]
   pub url: Option<String>,
 
+  #[cfg(feature = "deno_ffi")]
+  /// Resource ID associated with this Device instance.
+  pub rid: i32,
+
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
+  #[cfg(not(feature = "deno_ffi"))]
   device: rusb::Device<rusb::Context>,
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
@@ -393,6 +438,7 @@ pub struct UsbDevice {
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
+  #[cfg(not(feature = "deno_ffi"))]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
 }
 
@@ -464,15 +510,15 @@ impl UsbDevice {
 }
 
 impl UsbDevice {
-  pub async fn isochronous_transfer_in(&mut self) {
+  pub fn isochronous_transfer_in(&mut self) {
     unimplemented!()
   }
 
-  pub async fn isochronous_transfer_out(&mut self) {
+  pub fn isochronous_transfer_out(&mut self) {
     unimplemented!()
   }
 
-  pub async fn open(&mut self) -> Result<()> {
+  pub fn open(&mut self) -> Result<()> {
     // 3. device is already open?
     if self.opened {
       return Ok(());
@@ -481,8 +527,24 @@ impl UsbDevice {
     // 4.
     #[cfg(feature = "libusb")]
     {
-      let handle = self.device.open()?;
-      self.device_handle = Some(handle);
+      #[cfg(feature = "deno_ffi")]
+      {
+        ffi::RESOURCES
+          .lock()
+          .unwrap()
+          .get_mut(&self.rid)
+          .unwrap()
+          .lock()
+          .unwrap()
+          .device
+          .open()?;
+      }
+
+      #[cfg(not(feature = "deno_ffi"))]
+      {
+        let handle = self.device.open()?;
+        self.device_handle = Some(handle);
+      }
     }
 
     #[cfg(feature = "wasm")]
@@ -496,7 +558,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn close(&mut self) -> Result<()> {
+  pub fn close(&mut self) -> Result<()> {
     // 3. device is already closed?
     if !self.opened {
       return Ok(());
@@ -504,7 +566,7 @@ impl UsbDevice {
 
     #[cfg(feature = "libusb")]
     {
-      match &self.device_handle {
+      match get_device_handle!(self) {
         Some(handle_ref) => {
           // 5-6.
           // release claimed interfaces, close device and release handle
@@ -513,7 +575,10 @@ impl UsbDevice {
         None => unreachable!(),
       };
 
-      self.device_handle = None;
+      #[cfg(not(feature = "deno_ffi"))]
+      {
+        self.device_handle = None;
+      }
     }
 
     #[cfg(feature = "wasm")]
@@ -528,7 +593,7 @@ impl UsbDevice {
   }
 
   /// `configuration_value` is the bConfigurationValue of the device configuration.
-  pub async fn select_configuration(
+  pub fn select_configuration(
     &mut self,
     configuration_value: u8,
   ) -> Result<()> {
@@ -547,7 +612,23 @@ impl UsbDevice {
         .iter()
         .position(|c| c.configuration_value == configuration_value)
       {
-        Some(config_idx) => self.device.config_descriptor(config_idx as u8)?,
+        Some(config_idx) => {
+          #[cfg(not(feature = "deno_ffi"))]
+          {
+            self.device.config_descriptor(config_idx as u8)?
+          }
+
+          #[cfg(feature = "deno_ffi")]
+          ffi::RESOURCES
+            .lock()
+            .unwrap()
+            .get_mut(&self.rid)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .device
+            .config_descriptor(config_idx as u8)?
+        }
         None => return Err(Error::NotFound),
       };
 
@@ -557,7 +638,7 @@ impl UsbDevice {
       }
 
       // 5-6.
-      let handle = match self.device_handle {
+      let handle = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           // Calls `libusb_set_configuration`
           handle_ref.set_active_configuration(configuration_value)?;
@@ -567,13 +648,15 @@ impl UsbDevice {
       };
 
       // 7.
-      self.configuration =
-        Some(UsbConfiguration::from(configuration, &handle)?);
+      self.configuration = Some(UsbConfiguration::from(
+        configuration,
+        &get_device_handle!(self).unwrap(),
+      )?);
     }
     Ok(())
   }
 
-  pub async fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
+  pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.claim_interface(interface_number);
@@ -584,17 +667,16 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 2.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
       let mut interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
-
       // 3.
       if !self.opened {
         return Err(Error::InvalidState);
@@ -604,26 +686,22 @@ impl UsbDevice {
       if interface.claimed {
         return Ok(());
       }
+      // 6.
+      interface.claimed = true;
 
       // 5.
-      match self.device_handle {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
-          handle_ref.claim_interface(interface.interface_number)?;
+          handle_ref.claim_interface(interface_number)?;
         }
         None => unreachable!(),
       };
-
-      // 6.
-      interface.claimed = true;
     }
 
     Ok(())
   }
 
-  pub async fn release_interface(
-    &mut self,
-    interface_number: u8,
-  ) -> Result<()> {
+  pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.release_interface(interface_number);
@@ -633,14 +711,14 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 3.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
       let mut interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
 
@@ -654,22 +732,22 @@ impl UsbDevice {
         return Ok(());
       }
 
+      // 6.
+      interface.claimed = false;
+
       // 5.
-      match self.device_handle {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
-          handle_ref.release_interface(interface.interface_number)?;
+          handle_ref.release_interface(interface_number)?;
         }
         None => unreachable!(),
       };
-
-      // 6.
-      interface.claimed = false;
     }
 
     Ok(())
   }
 
-  pub async fn select_alternate_interface(
+  pub fn select_alternate_interface(
     &mut self,
     interface_number: u8,
     alternate_setting: u8,
@@ -685,14 +763,14 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       // 3.
-      let mut active_configuration =
+      let active_configuration =
         self.configuration.as_mut().ok_or(Error::NotFound)?;
-      let mut interface = match active_configuration
+      let interface = match active_configuration
         .interfaces
         .iter_mut()
         .find(|i| i.interface_number == interface_number)
       {
-        Some(mut i) => i,
+        Some(i) => i,
         None => return Err(Error::NotFound),
       };
 
@@ -702,12 +780,10 @@ impl UsbDevice {
       }
 
       // 5-6.
-      match self.device_handle {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
-          handle_ref.set_alternate_setting(
-            interface.interface_number,
-            alternate_setting,
-          )?;
+          handle_ref
+            .set_alternate_setting(interface_number, alternate_setting)?;
         }
         None => unreachable!(),
       };
@@ -716,7 +792,7 @@ impl UsbDevice {
     return Ok(());
   }
 
-  pub async fn control_transfer_in(
+  pub fn control_transfer_in(
     &mut self,
     setup: UsbControlTransferParameters,
     length: usize,
@@ -741,7 +817,7 @@ impl UsbDevice {
       let mut buffer = vec![0u8; length];
 
       // 6-7.
-      let bytes_transferred = match self.device_handle {
+      let bytes_transferred = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -783,7 +859,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn control_transfer_out(
+  pub fn control_transfer_out(
     &mut self,
     setup: UsbControlTransferParameters,
     data: &[u8],
@@ -805,7 +881,7 @@ impl UsbDevice {
       self.validate_control_setup(&setup)?;
 
       // 4-8.
-      let bytes_written = match self.device_handle {
+      let bytes_written = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -840,7 +916,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn clear_halt(
+  pub fn clear_halt(
     &mut self,
     direction: Direction,
     endpoint_number: u8,
@@ -883,7 +959,7 @@ impl UsbDevice {
       }
 
       // 4-5.
-      match self.device_handle {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let mut endpoint = endpoint_number;
 
@@ -900,7 +976,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn transfer_in(
+  pub fn transfer_in(
     &mut self,
     endpoint_number: u8,
     length: usize,
@@ -946,11 +1022,12 @@ impl UsbDevice {
       let mut buffer = vec![0u8; length];
 
       // 7-8.
-      let bytes_transferred = match self.device_handle {
+      let ty = endpoint.r#type;
+      let bytes_transferred = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_IN | endpoint_number;
 
-          match endpoint.r#type {
+          match ty {
             UsbEndpointType::Bulk => handle_ref.read_bulk(
               endpoint_addr,
               &mut buffer,
@@ -977,7 +1054,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn transfer_out(
+  pub fn transfer_out(
     &mut self,
     endpoint_number: u8,
     data: &[u8],
@@ -1020,11 +1097,12 @@ impl UsbDevice {
       }
 
       // 5.
-      let bytes_written = match self.device_handle {
+      let ty = endpoint.r#type;
+      let bytes_written = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_OUT | endpoint_number;
 
-          match endpoint.r#type {
+          match ty {
             UsbEndpointType::Bulk => handle_ref.write_bulk(
               endpoint_addr,
               data,
@@ -1045,7 +1123,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn reset(&mut self) -> Result<()> {
+  pub fn reset(&mut self) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.reset();
@@ -1060,7 +1138,7 @@ impl UsbDevice {
       }
 
       // 4-6.
-      match self.device_handle {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => handle_ref.reset()?,
         None => unreachable!(),
       };
@@ -1075,6 +1153,7 @@ impl UsbDevice {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum UsbRequestType {
   Standard,
   Class,
@@ -1087,6 +1166,7 @@ pub enum UsbRequestType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum UsbRecipient {
   Device,
   Interface,
@@ -1100,6 +1180,7 @@ pub enum UsbRecipient {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbControlTransferParameters {
   pub request_type: UsbRequestType,
   pub recipient: UsbRecipient,
@@ -1252,6 +1333,9 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       .read_serial_number_string_ascii(&device_descriptor)
       .ok();
 
+    #[cfg(feature = "deno_ffi")]
+    let rid = ffi::RESOURCES.lock().unwrap().len() as i32; // TODO
+
     let usb_device = UsbDevice {
       configurations,
       configuration,
@@ -1271,9 +1355,16 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       serial_number,
       opened: false,
       url,
+      #[cfg(not(feature = "deno_ffi"))]
       device,
+      #[cfg(not(feature = "deno_ffi"))]
       device_handle: None,
+      #[cfg(feature = "deno_ffi")]
+      rid, // TODO
     };
+
+    #[cfg(feature = "deno_ffi")]
+    ffi::insert_device(rid, device);
 
     // Explicitly close the device.
     drop(handle);
@@ -1292,7 +1383,7 @@ impl Context {
     Ok(Self(window.navigator().usb()))
   }
 
-  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
     let usb = self.0.clone();
 
     let fut = usb.get_devices();
@@ -1320,7 +1411,7 @@ impl Context {
     Ok(Self(ctx))
   }
 
-  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
     let devices = self.0.devices()?;
 
     let usb_devices: Vec<UsbDevice> = devices
@@ -1360,9 +1451,9 @@ mod tests {
 
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
-  async fn test_device() -> UsbDevice {
+  fn test_device() -> UsbDevice {
     let ctx = Context::init().unwrap();
-    let devices = ctx.devices().await.unwrap();
+    let devices = ctx.devices().unwrap();
     let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
     device
   }
@@ -1370,7 +1461,7 @@ mod tests {
   #[tokio::test]
   async fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let mut device = test_device().await;
+    let mut device = test_device();
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
@@ -1381,25 +1472,25 @@ mod tests {
 
   #[tokio::test]
   async fn test_device_initial_state() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
-    device.open().await?;
-    device.open().await?;
+    device.open()?;
+    device.open()?;
 
-    device.close().await?;
-    device.close().await?;
+    device.close()?;
+    device.close()?;
     Ok(())
   }
 
   #[tokio::test]
   async fn test_device_invalid_state() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
     // Without open() should panic.
-    device.select_configuration(1).await.unwrap_err();
-    device.claim_interface(2).await.unwrap_err();
+    device.select_configuration(1).unwrap_err();
+    device.claim_interface(2).unwrap_err();
 
-    device.select_alternate_interface(2, 0).await.unwrap_err();
+    device.select_alternate_interface(2, 0).unwrap_err();
 
     device
       .control_transfer_out(
@@ -1412,13 +1503,12 @@ mod tests {
         },
         &[],
       )
-      .await
       .unwrap_err();
 
-    device.transfer_out(4, b"H").await.unwrap_err();
-    device.clear_halt(Direction::Out, 4).await.unwrap_err();
-    device.transfer_out(4, b"L").await.unwrap_err();
-    device.clear_halt(Direction::Out, 4).await.unwrap_err();
+    device.transfer_out(4, b"H").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
+    device.transfer_out(4, b"L").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
 
     device
       .control_transfer_out(
@@ -1431,11 +1521,10 @@ mod tests {
         },
         &[],
       )
-      .await
       .unwrap_err();
-    device.release_interface(2).await.unwrap_err();
-    device.reset().await.unwrap_err();
-    device.close().await?;
+    device.release_interface(2).unwrap_err();
+    device.reset().unwrap_err();
+    device.close()?;
     Ok(())
   }
 
@@ -1454,13 +1543,13 @@ mod tests {
   fn test_device_blink() {
     block_on(async move {
       async fn test(device: &mut UsbDevice) {
-        device.transfer_out(4, b"H").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
+        device.transfer_out(4, b"H").unwrap();
+        device.clear_halt(Direction::Out, 4).unwrap();
 
-        device.transfer_out(4, b"L").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
+        device.transfer_out(4, b"L").unwrap();
+        device.clear_halt(Direction::Out, 4).unwrap();
 
-        let recv = device.transfer_in(5, 64).await.unwrap();
+        let recv = device.transfer_in(5, 64).unwrap();
         let mut first_run = false;
 
         match recv.as_slice() {
@@ -1470,7 +1559,7 @@ mod tests {
           b"H\r\nTurning LED on.\r\n> " => {}
           _ => unreachable!(),
         };
-        let recv = device.transfer_in(5, 64).await.unwrap();
+        let recv = device.transfer_in(5, 64).unwrap();
 
         match (first_run, recv.as_slice()) {
           (true, b"H\r\nTurning LED on.\r\n> ")
@@ -1478,9 +1567,9 @@ mod tests {
           _ => unreachable!(),
         };
       }
-      let mut device = test_device().await;
+      let mut device = test_device();
 
-      device.open().await.unwrap();
+      device.open().unwrap();
 
       // Not part of public API.
       // This is to ensure that the device is not busy.
@@ -1492,7 +1581,7 @@ mod tests {
         .unwrap();
 
       // A real world application should use `device.configuration.is_none()`.
-      match device.select_configuration(1).await {
+      match device.select_configuration(1) {
         Ok(_) => {} // Unreachable in the test runner
         Err(crate::Error::Usb(rusb::Error::Busy))
         | Err(crate::Error::InvalidState) => {}
@@ -1500,8 +1589,8 @@ mod tests {
       }
 
       // Device might be busy.
-      if device.claim_interface(2).await.is_ok() {
-        device.select_alternate_interface(2, 0).await.unwrap();
+      if device.claim_interface(2).is_ok() {
+        device.select_alternate_interface(2, 0).unwrap();
 
         device
           .control_transfer_out(
@@ -1514,9 +1603,8 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
-        test(&mut device).await;
+        test(&mut device);
         device
           .control_transfer_out(
             UsbControlTransferParameters {
@@ -1528,14 +1616,13 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
       } else {
-        test(&mut device).await;
+        test(&mut device);
       }
-      device.release_interface(2).await.unwrap();
-      device.reset().await.unwrap();
-      device.close().await.unwrap();
+      device.release_interface(2).unwrap();
+      device.reset().unwrap();
+      device.close().unwrap();
     })
   }
 
@@ -1557,7 +1644,6 @@ mod tests {
             // kDeviceDescriptorLength
             18,
           )
-          .await
           .unwrap();
 
         assert_eq!(device_descriptor_bytes.len(), 18);
@@ -1607,9 +1693,9 @@ mod tests {
           device.configurations.len() as u8
         );
       }
-      let mut device = test_device().await;
+      let mut device = test_device();
 
-      device.open().await.unwrap();
+      device.open().unwrap();
 
       // Not part of public API.
       // This is to ensure that the device is not busy.
@@ -1621,7 +1707,7 @@ mod tests {
         .unwrap();
 
       // A real world application should use `device.configuration.is_none()`.
-      match device.select_configuration(1).await {
+      match device.select_configuration(1) {
         Ok(_) => {} // Unreachable in the test runner
         Err(crate::Error::Usb(rusb::Error::Busy))
         | Err(crate::Error::InvalidState) => {}
@@ -1629,8 +1715,8 @@ mod tests {
       }
 
       // Device might be busy.
-      if device.claim_interface(2).await.is_ok() {
-        device.select_alternate_interface(2, 0).await.unwrap();
+      if device.claim_interface(2).is_ok() {
+        device.select_alternate_interface(2, 0).unwrap();
 
         device
           .control_transfer_out(
@@ -1643,9 +1729,8 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
-        test(&mut device).await;
+        test(&mut device);
         device
           .control_transfer_out(
             UsbControlTransferParameters {
@@ -1657,14 +1742,13 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
       } else {
-        test(&mut device).await;
+        test(&mut device);
       }
-      device.release_interface(2).await.unwrap();
-      device.reset().await.unwrap();
-      device.close().await.unwrap();
+      device.release_interface(2).unwrap();
+      device.reset().unwrap();
+      device.close().unwrap();
     })
   }
 
@@ -1672,37 +1756,37 @@ mod tests {
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   async fn test_unimplemented1() {
-    let mut device = test_device().await;
-    device.isochronous_transfer_in().await;
+    let mut device = test_device();
+    device.isochronous_transfer_in();
   }
 
   #[tokio::test]
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   async fn test_unimplemented2() {
-    let mut device = test_device().await;
-    device.isochronous_transfer_out().await;
+    let mut device = test_device();
+    device.isochronous_transfer_out();
   }
 
   #[tokio::test]
   async fn test_device_not_found() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
-    device.open().await?;
+    device.open()?;
 
-    device.select_configuration(255).await.unwrap_err();
-    device.claim_interface(255).await.unwrap_err();
-    device.release_interface(255).await.unwrap_err();
-    device.select_alternate_interface(255, 0).await.unwrap_err();
+    device.select_configuration(255).unwrap_err();
+    device.claim_interface(255).unwrap_err();
+    device.release_interface(255).unwrap_err();
+    device.select_alternate_interface(255, 0).unwrap_err();
 
-    device.close().await?;
+    device.close()?;
     Ok(())
   }
 
   #[tokio::test]
   async fn test_validate_control_setup() {
-    let mut device = test_device().await;
-    device.open().await.unwrap();
+    let mut device = test_device();
+    device.open().unwrap();
 
     fn standard_ctrl_req(device: &mut UsbDevice) -> crate::Result<()> {
       device.validate_control_setup(&UsbControlTransferParameters {
@@ -1718,7 +1802,7 @@ mod tests {
     standard_ctrl_req(&mut device).unwrap_err();
 
     // Interface is claimed and selected.
-    device.claim_interface(2).await.unwrap();
+    device.claim_interface(2).unwrap();
     standard_ctrl_req(&mut device).unwrap();
   }
 
