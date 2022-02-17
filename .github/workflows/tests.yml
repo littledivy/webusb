@@ -10,7 +10,8 @@ env:
 jobs:
   build:
     name: test-bors
-    runs-on: [self-hosted, linux, x64]
+    # runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, macOS, x64]
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       RUSTFLAGS: -Zinstrument-coverage
