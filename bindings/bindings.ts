@@ -28,6 +28,17 @@ export type UsbInterface = {
   alternates: Array<UsbAlternateInterface>
   claimed: boolean
 }
+export type UsbRequestType =
+  | "standard"
+  | "class"
+  | "vendor"
+export type UsbControlTransferParameters = {
+  requestType: UsbRequestType
+  recipient: UsbRecipient
+  request: number
+  value: number
+  index: number
+}
 export type Direction =
   | "in"
   | "out"
@@ -36,18 +47,16 @@ export type UsbRecipient =
   | "interface"
   | "endpoint"
   | "other"
+export type UsbEndpointType =
+  | "bulk"
+  | "interrupt"
+  | "isochronous"
+  | "control"
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
-}
-export type UsbControlTransferParameters = {
-  requestType: UsbRequestType
-  recipient: UsbRecipient
-  request: number
-  value: number
-  index: number
 }
 /**
  * Represents a UsbDevice.
@@ -146,15 +155,10 @@ export type UsbDevice = {
   /**
    * Resource ID associated with this Device instance.
    */
-  rid: isize
+  rid: number
   device: Device<Context>
   device: UsbDevice
   deviceHandle: DeviceHandle<Context> | undefined | null
-}
-export type UsbConfiguration = {
-  configurationName: string | undefined | null
-  configurationValue: number
-  interfaces: Array<UsbInterface>
 }
 export type UsbAlternateInterface = {
   alternateSetting: number
@@ -164,12 +168,8 @@ export type UsbAlternateInterface = {
   interfaceName: string | undefined | null
   endpoints: Array<UsbEndpoint>
 }
-export type UsbRequestType =
-  | "standard"
-  | "class"
-  | "vendor"
-export type UsbEndpointType =
-  | "bulk"
-  | "interrupt"
-  | "isochronous"
-  | "control"
+export type UsbConfiguration = {
+  configurationName: string | undefined | null
+  configurationValue: number
+  interfaces: Array<UsbInterface>
+}

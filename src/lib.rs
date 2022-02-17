@@ -332,6 +332,28 @@ impl UsbAlternateInterface {
   }
 }
 
+#[cfg(feature = "deno_ffi")]
+macro_rules! get_device_handle {
+  ($self: expr) => {
+    ffi::RESOURCES
+      .lock()
+      .unwrap()
+      .get_mut(&$self.rid)
+      .unwrap()
+      .lock()
+      .unwrap()
+      .device_handle
+      .as_mut()
+  };
+}
+
+#[cfg(not(feature = "deno_ffi"))]
+macro_rules! get_device_handle {
+  ($self: expr) => {
+    $self.device_handle.as_mut()
+  };
+}
+
 /// Represents a UsbDevice.
 /// Only way you can obtain one is through `Context::devices`
 /// https://wicg.github.io/webusb/#device-usage
@@ -403,7 +425,7 @@ pub struct UsbDevice {
 
   #[cfg(feature = "deno_ffi")]
   /// Resource ID associated with this Device instance.
-  pub rid: isize,
+  pub rid: i32,
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
@@ -506,11 +528,17 @@ impl UsbDevice {
     #[cfg(feature = "libusb")]
     {
       #[cfg(feature = "deno_ffi")]
-      let handle = ffi::get_device(self.rid)
-        .map_err(|_| Error::NotFound)?
-        .deref_mut()
-        .device
-        .open()?;
+      {
+        ffi::RESOURCES
+          .lock()
+          .unwrap()
+          .get_mut(&self.rid)
+          .unwrap()
+          .lock()
+          .unwrap()
+          .device
+          .open()?;
+      }
 
       #[cfg(not(feature = "deno_ffi"))]
       {
@@ -538,7 +566,7 @@ impl UsbDevice {
 
     #[cfg(feature = "libusb")]
     {
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(handle_ref) => {
           // 5-6.
           // release claimed interfaces, close device and release handle
@@ -586,12 +614,20 @@ impl UsbDevice {
       {
         Some(config_idx) => {
           #[cfg(not(feature = "deno_ffi"))]
-          let dev = &self.device;
+          {
+            self.device.config_descriptor(config_idx as u8)?
+          }
 
           #[cfg(feature = "deno_ffi")]
-          let dev = &ffi::get_device(self.rid).unwrap().device;
-
-          dev.config_descriptor(config_idx as u8)?
+          ffi::RESOURCES
+            .lock()
+            .unwrap()
+            .get_mut(&self.rid)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .device
+            .config_descriptor(config_idx as u8)?
         }
         None => return Err(Error::NotFound),
       };
@@ -602,7 +638,7 @@ impl UsbDevice {
       }
 
       // 5-6.
-      let handle = match self.get_device_handle() {
+      let handle = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           // Calls `libusb_set_configuration`
           handle_ref.set_active_configuration(configuration_value)?;
@@ -612,24 +648,12 @@ impl UsbDevice {
       };
 
       // 7.
-      self.configuration =
-        Some(UsbConfiguration::from(configuration, &handle)?);
+      self.configuration = Some(UsbConfiguration::from(
+        configuration,
+        &get_device_handle!(self).unwrap(),
+      )?);
     }
     Ok(())
-  }
-
-  #[cfg(feature = "libusb")]
-  fn get_device_handle(
-    &mut self,
-  ) -> &mut Option<rusb::DeviceHandle<rusb::Context>> {
-    #[cfg(feature = "deno_ffi")]
-    return match ffi::get_device(self.rid) {
-      Ok(mut device) => &mut device.device_handle,
-      Err(_) => &mut None,
-    };
-
-    #[cfg(not(feature = "deno_ffi"))]
-    return &mut self.device_handle;
   }
 
   pub async fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
@@ -666,7 +690,7 @@ impl UsbDevice {
       interface.claimed = true;
 
       // 5.
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           handle_ref.claim_interface(interface_number)?;
         }
@@ -715,7 +739,7 @@ impl UsbDevice {
       interface.claimed = false;
 
       // 5.
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           handle_ref.release_interface(interface_number)?;
         }
@@ -759,7 +783,7 @@ impl UsbDevice {
       }
 
       // 5-6.
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           handle_ref
             .set_alternate_setting(interface_number, alternate_setting)?;
@@ -796,7 +820,7 @@ impl UsbDevice {
       let mut buffer = vec![0u8; length];
 
       // 6-7.
-      let bytes_transferred = match self.get_device_handle() {
+      let bytes_transferred = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -860,7 +884,7 @@ impl UsbDevice {
       self.validate_control_setup(&setup)?;
 
       // 4-8.
-      let bytes_written = match self.get_device_handle() {
+      let bytes_written = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let req = match setup.request_type {
             UsbRequestType::Standard => rusb::RequestType::Standard,
@@ -938,7 +962,7 @@ impl UsbDevice {
       }
 
       // 4-5.
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let mut endpoint = endpoint_number;
 
@@ -1002,7 +1026,7 @@ impl UsbDevice {
 
       // 7-8.
       let ty = endpoint.r#type;
-      let bytes_transferred = match self.get_device_handle() {
+      let bytes_transferred = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_IN | endpoint_number;
 
@@ -1077,7 +1101,7 @@ impl UsbDevice {
 
       // 5.
       let ty = endpoint.r#type;
-      let bytes_written = match self.get_device_handle() {
+      let bytes_written = match get_device_handle!(self) {
         Some(ref mut handle_ref) => {
           let endpoint_addr = EP_DIR_OUT | endpoint_number;
 
@@ -1117,7 +1141,7 @@ impl UsbDevice {
       }
 
       // 4-6.
-      match self.get_device_handle() {
+      match get_device_handle!(self) {
         Some(ref mut handle_ref) => handle_ref.reset()?,
         None => unreachable!(),
       };
