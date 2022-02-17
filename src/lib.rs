@@ -510,15 +510,15 @@ impl UsbDevice {
 }
 
 impl UsbDevice {
-  pub async fn isochronous_transfer_in(&mut self) {
+  pub fn isochronous_transfer_in(&mut self) {
     unimplemented!()
   }
 
-  pub async fn isochronous_transfer_out(&mut self) {
+  pub fn isochronous_transfer_out(&mut self) {
     unimplemented!()
   }
 
-  pub async fn open(&mut self) -> Result<()> {
+  pub fn open(&mut self) -> Result<()> {
     // 3. device is already open?
     if self.opened {
       return Ok(());
@@ -558,7 +558,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn close(&mut self) -> Result<()> {
+  pub fn close(&mut self) -> Result<()> {
     // 3. device is already closed?
     if !self.opened {
       return Ok(());
@@ -593,7 +593,7 @@ impl UsbDevice {
   }
 
   /// `configuration_value` is the bConfigurationValue of the device configuration.
-  pub async fn select_configuration(
+  pub fn select_configuration(
     &mut self,
     configuration_value: u8,
   ) -> Result<()> {
@@ -656,7 +656,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
+  pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.claim_interface(interface_number);
@@ -701,10 +701,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn release_interface(
-    &mut self,
-    interface_number: u8,
-  ) -> Result<()> {
+  pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.release_interface(interface_number);
@@ -750,7 +747,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn select_alternate_interface(
+  pub fn select_alternate_interface(
     &mut self,
     interface_number: u8,
     alternate_setting: u8,
@@ -795,7 +792,7 @@ impl UsbDevice {
     return Ok(());
   }
 
-  pub async fn control_transfer_in(
+  pub fn control_transfer_in(
     &mut self,
     setup: UsbControlTransferParameters,
     length: usize,
@@ -862,7 +859,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn control_transfer_out(
+  pub fn control_transfer_out(
     &mut self,
     setup: UsbControlTransferParameters,
     data: &[u8],
@@ -919,7 +916,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn clear_halt(
+  pub fn clear_halt(
     &mut self,
     direction: Direction,
     endpoint_number: u8,
@@ -979,7 +976,7 @@ impl UsbDevice {
     Ok(())
   }
 
-  pub async fn transfer_in(
+  pub fn transfer_in(
     &mut self,
     endpoint_number: u8,
     length: usize,
@@ -1057,7 +1054,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn transfer_out(
+  pub fn transfer_out(
     &mut self,
     endpoint_number: u8,
     data: &[u8],
@@ -1126,7 +1123,7 @@ impl UsbDevice {
     }
   }
 
-  pub async fn reset(&mut self) -> Result<()> {
+  pub fn reset(&mut self) -> Result<()> {
     #[cfg(feature = "wasm")]
     {
       let fut = self.device.reset();
@@ -1337,7 +1334,7 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       .ok();
 
     #[cfg(feature = "deno_ffi")]
-    let rid = 0; // TODO
+    let rid = ffi::RESOURCES.lock().unwrap().len() as i32; // TODO
 
     let usb_device = UsbDevice {
       configurations,
@@ -1386,7 +1383,7 @@ impl Context {
     Ok(Self(window.navigator().usb()))
   }
 
-  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
     let usb = self.0.clone();
 
     let fut = usb.get_devices();
@@ -1414,7 +1411,7 @@ impl Context {
     Ok(Self(ctx))
   }
 
-  pub async fn devices(&self) -> Result<Vec<UsbDevice>> {
+  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
     let devices = self.0.devices()?;
 
     let usb_devices: Vec<UsbDevice> = devices
@@ -1454,9 +1451,9 @@ mod tests {
 
   // Arduino Leonardo (2341:8036).
   // Make sure you follow the instructions and load this sketch https://github.com/webusb/arduino/blob/gh-pages/demos/console/sketch/sketch.ino
-  async fn test_device() -> UsbDevice {
+  fn test_device() -> UsbDevice {
     let ctx = Context::init().unwrap();
-    let devices = ctx.devices().await.unwrap();
+    let devices = ctx.devices().unwrap();
     let device = devices.into_iter().find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036).expect("Device not found.\nhelp: ensure you follow the test setup instructions carefully");
     device
   }
@@ -1464,7 +1461,7 @@ mod tests {
   #[tokio::test]
   async fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
-    let mut device = test_device().await;
+    let mut device = test_device();
     assert_eq!(
       device.url,
       Some("https://webusb.github.io/arduino/demos/console".to_string())
@@ -1475,25 +1472,25 @@ mod tests {
 
   #[tokio::test]
   async fn test_device_initial_state() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
-    device.open().await?;
-    device.open().await?;
+    device.open()?;
+    device.open()?;
 
-    device.close().await?;
-    device.close().await?;
+    device.close()?;
+    device.close()?;
     Ok(())
   }
 
   #[tokio::test]
   async fn test_device_invalid_state() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
     // Without open() should panic.
-    device.select_configuration(1).await.unwrap_err();
-    device.claim_interface(2).await.unwrap_err();
+    device.select_configuration(1).unwrap_err();
+    device.claim_interface(2).unwrap_err();
 
-    device.select_alternate_interface(2, 0).await.unwrap_err();
+    device.select_alternate_interface(2, 0).unwrap_err();
 
     device
       .control_transfer_out(
@@ -1506,13 +1503,12 @@ mod tests {
         },
         &[],
       )
-      .await
       .unwrap_err();
 
-    device.transfer_out(4, b"H").await.unwrap_err();
-    device.clear_halt(Direction::Out, 4).await.unwrap_err();
-    device.transfer_out(4, b"L").await.unwrap_err();
-    device.clear_halt(Direction::Out, 4).await.unwrap_err();
+    device.transfer_out(4, b"H").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
+    device.transfer_out(4, b"L").unwrap_err();
+    device.clear_halt(Direction::Out, 4).unwrap_err();
 
     device
       .control_transfer_out(
@@ -1525,11 +1521,10 @@ mod tests {
         },
         &[],
       )
-      .await
       .unwrap_err();
-    device.release_interface(2).await.unwrap_err();
-    device.reset().await.unwrap_err();
-    device.close().await?;
+    device.release_interface(2).unwrap_err();
+    device.reset().unwrap_err();
+    device.close()?;
     Ok(())
   }
 
@@ -1548,13 +1543,13 @@ mod tests {
   fn test_device_blink() {
     block_on(async move {
       async fn test(device: &mut UsbDevice) {
-        device.transfer_out(4, b"H").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
+        device.transfer_out(4, b"H").unwrap();
+        device.clear_halt(Direction::Out, 4).unwrap();
 
-        device.transfer_out(4, b"L").await.unwrap();
-        device.clear_halt(Direction::Out, 4).await.unwrap();
+        device.transfer_out(4, b"L").unwrap();
+        device.clear_halt(Direction::Out, 4).unwrap();
 
-        let recv = device.transfer_in(5, 64).await.unwrap();
+        let recv = device.transfer_in(5, 64).unwrap();
         let mut first_run = false;
 
         match recv.as_slice() {
@@ -1564,7 +1559,7 @@ mod tests {
           b"H\r\nTurning LED on.\r\n> " => {}
           _ => unreachable!(),
         };
-        let recv = device.transfer_in(5, 64).await.unwrap();
+        let recv = device.transfer_in(5, 64).unwrap();
 
         match (first_run, recv.as_slice()) {
           (true, b"H\r\nTurning LED on.\r\n> ")
@@ -1572,9 +1567,9 @@ mod tests {
           _ => unreachable!(),
         };
       }
-      let mut device = test_device().await;
+      let mut device = test_device();
 
-      device.open().await.unwrap();
+      device.open().unwrap();
 
       // Not part of public API.
       // This is to ensure that the device is not busy.
@@ -1586,7 +1581,7 @@ mod tests {
         .unwrap();
 
       // A real world application should use `device.configuration.is_none()`.
-      match device.select_configuration(1).await {
+      match device.select_configuration(1) {
         Ok(_) => {} // Unreachable in the test runner
         Err(crate::Error::Usb(rusb::Error::Busy))
         | Err(crate::Error::InvalidState) => {}
@@ -1594,8 +1589,8 @@ mod tests {
       }
 
       // Device might be busy.
-      if device.claim_interface(2).await.is_ok() {
-        device.select_alternate_interface(2, 0).await.unwrap();
+      if device.claim_interface(2).is_ok() {
+        device.select_alternate_interface(2, 0).unwrap();
 
         device
           .control_transfer_out(
@@ -1608,9 +1603,8 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
-        test(&mut device).await;
+        test(&mut device);
         device
           .control_transfer_out(
             UsbControlTransferParameters {
@@ -1622,14 +1616,13 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
       } else {
-        test(&mut device).await;
+        test(&mut device);
       }
-      device.release_interface(2).await.unwrap();
-      device.reset().await.unwrap();
-      device.close().await.unwrap();
+      device.release_interface(2).unwrap();
+      device.reset().unwrap();
+      device.close().unwrap();
     })
   }
 
@@ -1651,7 +1644,6 @@ mod tests {
             // kDeviceDescriptorLength
             18,
           )
-          .await
           .unwrap();
 
         assert_eq!(device_descriptor_bytes.len(), 18);
@@ -1701,9 +1693,9 @@ mod tests {
           device.configurations.len() as u8
         );
       }
-      let mut device = test_device().await;
+      let mut device = test_device();
 
-      device.open().await.unwrap();
+      device.open().unwrap();
 
       // Not part of public API.
       // This is to ensure that the device is not busy.
@@ -1715,7 +1707,7 @@ mod tests {
         .unwrap();
 
       // A real world application should use `device.configuration.is_none()`.
-      match device.select_configuration(1).await {
+      match device.select_configuration(1) {
         Ok(_) => {} // Unreachable in the test runner
         Err(crate::Error::Usb(rusb::Error::Busy))
         | Err(crate::Error::InvalidState) => {}
@@ -1723,8 +1715,8 @@ mod tests {
       }
 
       // Device might be busy.
-      if device.claim_interface(2).await.is_ok() {
-        device.select_alternate_interface(2, 0).await.unwrap();
+      if device.claim_interface(2).is_ok() {
+        device.select_alternate_interface(2, 0).unwrap();
 
         device
           .control_transfer_out(
@@ -1737,9 +1729,8 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
-        test(&mut device).await;
+        test(&mut device);
         device
           .control_transfer_out(
             UsbControlTransferParameters {
@@ -1751,14 +1742,13 @@ mod tests {
             },
             &[],
           )
-          .await
           .unwrap();
       } else {
-        test(&mut device).await;
+        test(&mut device);
       }
-      device.release_interface(2).await.unwrap();
-      device.reset().await.unwrap();
-      device.close().await.unwrap();
+      device.release_interface(2).unwrap();
+      device.reset().unwrap();
+      device.close().unwrap();
     })
   }
 
@@ -1766,37 +1756,37 @@ mod tests {
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   async fn test_unimplemented1() {
-    let mut device = test_device().await;
-    device.isochronous_transfer_in().await;
+    let mut device = test_device();
+    device.isochronous_transfer_in();
   }
 
   #[tokio::test]
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   async fn test_unimplemented2() {
-    let mut device = test_device().await;
-    device.isochronous_transfer_out().await;
+    let mut device = test_device();
+    device.isochronous_transfer_out();
   }
 
   #[tokio::test]
   async fn test_device_not_found() -> crate::Result<()> {
-    let mut device = test_device().await;
+    let mut device = test_device();
 
-    device.open().await?;
+    device.open()?;
 
-    device.select_configuration(255).await.unwrap_err();
-    device.claim_interface(255).await.unwrap_err();
-    device.release_interface(255).await.unwrap_err();
-    device.select_alternate_interface(255, 0).await.unwrap_err();
+    device.select_configuration(255).unwrap_err();
+    device.claim_interface(255).unwrap_err();
+    device.release_interface(255).unwrap_err();
+    device.select_alternate_interface(255, 0).unwrap_err();
 
-    device.close().await?;
+    device.close()?;
     Ok(())
   }
 
   #[tokio::test]
   async fn test_validate_control_setup() {
-    let mut device = test_device().await;
-    device.open().await.unwrap();
+    let mut device = test_device();
+    device.open().unwrap();
 
     fn standard_ctrl_req(device: &mut UsbDevice) -> crate::Result<()> {
       device.validate_control_setup(&UsbControlTransferParameters {
@@ -1812,7 +1802,7 @@ mod tests {
     standard_ctrl_req(&mut device).unwrap_err();
 
     // Interface is claimed and selected.
-    device.claim_interface(2).await.unwrap();
+    device.claim_interface(2).unwrap();
     standard_ctrl_req(&mut device).unwrap();
   }
 

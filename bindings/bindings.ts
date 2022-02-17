@@ -21,43 +21,57 @@ const opts = {
   url: (new URL("../target/debug", import.meta.url)).toString(),
   policy: CachePolicy.NONE,
 }
-const _lib = await prepare(opts, {})
-export type UsbInterface = {
-  interfaceNumber: number
-  alternate: UsbAlternateInterface
-  alternates: Array<UsbAlternateInterface>
-  claimed: boolean
+const _lib = await prepare(opts, {
+  close: {
+    parameters: ["pointer", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  get_devices: { parameters: [], result: "pointer", nonblocking: true },
+  open: {
+    parameters: ["pointer", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  reset: {
+    parameters: ["pointer", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  transfer_in: {
+    parameters: ["pointer", "usize", "u8", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  transfer_out: {
+    parameters: ["pointer", "usize", "u8", "pointer", "usize"],
+    result: "void",
+    nonblocking: false,
+  },
+})
+export type UsbAlternateInterface = {
+  alternateSetting: number
+  interfaceClass: number
+  interfaceSubclass: number
+  interfaceProtocol: number
+  interfaceName: string | undefined | null
+  endpoints: Array<UsbEndpoint>
 }
-export type UsbRequestType =
-  | "standard"
-  | "class"
-  | "vendor"
-export type UsbControlTransferParameters = {
-  requestType: UsbRequestType
-  recipient: UsbRecipient
-  request: number
-  value: number
-  index: number
-}
-export type Direction =
-  | "in"
-  | "out"
 export type UsbRecipient =
   | "device"
   | "interface"
   | "endpoint"
   | "other"
-export type UsbEndpointType =
-  | "bulk"
-  | "interrupt"
-  | "isochronous"
-  | "control"
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
 }
+export type UsbRequestType =
+  | "standard"
+  | "class"
+  | "vendor"
 /**
  * Represents a UsbDevice.
  * Only way you can obtain one is through `Context::devices`
@@ -160,16 +174,77 @@ export type UsbDevice = {
   device: UsbDevice
   deviceHandle: DeviceHandle<Context> | undefined | null
 }
-export type UsbAlternateInterface = {
-  alternateSetting: number
-  interfaceClass: number
-  interfaceSubclass: number
-  interfaceProtocol: number
-  interfaceName: string | undefined | null
-  endpoints: Array<UsbEndpoint>
+export type UsbInterface = {
+  interfaceNumber: number
+  alternate: UsbAlternateInterface
+  alternates: Array<UsbAlternateInterface>
+  claimed: boolean
 }
+export type Device = {
+  device: UsbDevice
+}
+export type UsbEndpointType =
+  | "bulk"
+  | "interrupt"
+  | "isochronous"
+  | "control"
 export type UsbConfiguration = {
   configurationName: string | undefined | null
   configurationValue: number
   interfaces: Array<UsbInterface>
+}
+export type Direction =
+  | "in"
+  | "out"
+export type Devices = {
+  devices: Array<UsbDevice>
+}
+export type UsbControlTransferParameters = {
+  requestType: UsbRequestType
+  recipient: UsbRecipient
+  request: number
+  value: number
+  index: number
+}
+export function close(a0: Device) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.close(a0_buf, a0_buf.byteLength)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
+export function get_devices() {
+  let rawResult = _lib.symbols.get_devices()
+  const result = rawResult.then(readPointer)
+  return result.then(r => JSON.parse(decode(r))) as Promise<Devices>
+}
+export function open(a0: Device) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.open(a0_buf, a0_buf.byteLength)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
+export function reset(a0: Device) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.reset(a0_buf, a0_buf.byteLength)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
+export function transfer_in(a0: Device, a1: number, a2: number) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.transfer_in(a0_buf, a0_buf.byteLength, a1, a2)
+  const result = readPointer(rawResult)
+  return result
+}
+export function transfer_out(a0: Device, a1: number, a2: Uint8Array) {
+  const a0_buf = encode(JSON.stringify(a0))
+  const a2_buf = encode(a2)
+  let rawResult = _lib.symbols.transfer_out(
+    a0_buf,
+    a0_buf.byteLength,
+    a1,
+    a2_buf,
+    a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
 }
