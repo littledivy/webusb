@@ -22,6 +22,11 @@ const opts = {
   policy: CachePolicy.NONE,
 }
 const _lib = await prepare(opts, {
+  claim_interface: {
+    parameters: ["pointer", "usize", "u8"],
+    result: "pointer",
+    nonblocking: false,
+  },
   clear_halt: {
     parameters: ["pointer", "usize", "pointer", "usize", "u8"],
     result: "pointer",
@@ -32,14 +37,39 @@ const _lib = await prepare(opts, {
     result: "pointer",
     nonblocking: false,
   },
+  control_transfer_in: {
+    parameters: ["pointer", "usize", "pointer", "usize", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  control_transfer_out: {
+    parameters: ["pointer", "usize", "pointer", "usize", "pointer", "usize"],
+    result: "usize",
+    nonblocking: false,
+  },
   get_devices: { parameters: [], result: "pointer", nonblocking: true },
   open: {
     parameters: ["pointer", "usize"],
     result: "pointer",
     nonblocking: false,
   },
+  release_interface: {
+    parameters: ["pointer", "usize", "u8"],
+    result: "pointer",
+    nonblocking: false,
+  },
   reset: {
     parameters: ["pointer", "usize"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  select_alternate_interface: {
+    parameters: ["pointer", "usize", "u8", "u8"],
+    result: "pointer",
+    nonblocking: false,
+  },
+  select_configuration: {
+    parameters: ["pointer", "usize", "u8"],
     result: "pointer",
     nonblocking: false,
   },
@@ -54,44 +84,11 @@ const _lib = await prepare(opts, {
     nonblocking: false,
   },
 })
-export type UsbAlternateInterface = {
-  alternateSetting: number
-  interfaceClass: number
-  interfaceSubclass: number
-  interfaceProtocol: number
-  interfaceName: string | undefined | null
-  endpoints: Array<UsbEndpoint>
-}
-export type UsbRequestType =
-  | "standard"
-  | "class"
-  | "vendor"
-export type Devices = {
-  devices: Array<UsbDevice>
-}
-export type UsbConfiguration = {
-  configurationName: string | undefined | null
-  configurationValue: number
-  interfaces: Array<UsbInterface>
-}
-export type UsbControlTransferParameters = {
-  requestType: UsbRequestType
-  recipient: UsbRecipient
-  request: number
-  value: number
-  index: number
-}
-export type FfiDirection = {
-  inner: Direction
-}
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
-}
-export type FfiUsbControlTransferParameters = {
-  inner: UsbControlTransferParameters
 }
 export type UsbInterface = {
   interfaceNumber: number
@@ -99,6 +96,28 @@ export type UsbInterface = {
   alternates: Array<UsbAlternateInterface>
   claimed: boolean
 }
+export type FfiUsbControlTransferParameters = {
+  inner: UsbControlTransferParameters
+}
+export type UsbRecipient =
+  | "device"
+  | "interface"
+  | "endpoint"
+  | "other"
+export type FfiDirection = {
+  inner: Direction
+}
+export type Device = {
+  device: UsbDevice
+}
+export type UsbConfiguration = {
+  configurationName: string | undefined | null
+  configurationValue: number
+  interfaces: Array<UsbInterface>
+}
+export type Direction =
+  | "in"
+  | "out"
 /**
  * Represents a UsbDevice.
  * Only way you can obtain one is through `Context::devices`
@@ -201,22 +220,39 @@ export type UsbDevice = {
   device: UsbDevice
   deviceHandle: DeviceHandle<Context> | undefined | null
 }
+export type UsbAlternateInterface = {
+  alternateSetting: number
+  interfaceClass: number
+  interfaceSubclass: number
+  interfaceProtocol: number
+  interfaceName: string | undefined | null
+  endpoints: Array<UsbEndpoint>
+}
+export type UsbControlTransferParameters = {
+  requestType: UsbRequestType
+  recipient: UsbRecipient
+  request: number
+  value: number
+  index: number
+}
+export type Devices = {
+  devices: Array<UsbDevice>
+}
+export type UsbRequestType =
+  | "standard"
+  | "class"
+  | "vendor"
 export type UsbEndpointType =
   | "bulk"
   | "interrupt"
   | "isochronous"
   | "control"
-export type Device = {
-  device: UsbDevice
+export function claim_interface(a0: Device, a1: number) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.claim_interface(a0_buf, a0_buf.byteLength, a1)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
 }
-export type UsbRecipient =
-  | "device"
-  | "interface"
-  | "endpoint"
-  | "other"
-export type Direction =
-  | "in"
-  | "out"
 export function clear_halt(a0: Device, a1: FfiDirection, a2: number) {
   const a0_buf = encode(JSON.stringify(a0))
   const a1_buf = encode(JSON.stringify(a1))
@@ -236,6 +272,42 @@ export function close(a0: Device) {
   const result = readPointer(rawResult)
   return JSON.parse(decode(result)) as Device
 }
+export function control_transfer_in(
+  a0: Device,
+  a1: FfiUsbControlTransferParameters,
+  a2: number,
+) {
+  const a0_buf = encode(JSON.stringify(a0))
+  const a1_buf = encode(JSON.stringify(a1))
+  let rawResult = _lib.symbols.control_transfer_in(
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2,
+  )
+  const result = readPointer(rawResult)
+  return result
+}
+export function control_transfer_out(
+  a0: Device,
+  a1: FfiUsbControlTransferParameters,
+  a2: Uint8Array,
+) {
+  const a0_buf = encode(JSON.stringify(a0))
+  const a1_buf = encode(JSON.stringify(a1))
+  const a2_buf = encode(a2)
+  let rawResult = _lib.symbols.control_transfer_out(
+    a0_buf,
+    a0_buf.byteLength,
+    a1_buf,
+    a1_buf.byteLength,
+    a2_buf,
+    a2_buf.byteLength,
+  )
+  const result = rawResult
+  return result
+}
 export function get_devices() {
   let rawResult = _lib.symbols.get_devices()
   const result = rawResult.then(readPointer)
@@ -247,9 +319,36 @@ export function open(a0: Device) {
   const result = readPointer(rawResult)
   return JSON.parse(decode(result)) as Device
 }
+export function release_interface(a0: Device, a1: number) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.release_interface(a0_buf, a0_buf.byteLength, a1)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
 export function reset(a0: Device) {
   const a0_buf = encode(JSON.stringify(a0))
   let rawResult = _lib.symbols.reset(a0_buf, a0_buf.byteLength)
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
+export function select_alternate_interface(a0: Device, a1: number, a2: number) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.select_alternate_interface(
+    a0_buf,
+    a0_buf.byteLength,
+    a1,
+    a2,
+  )
+  const result = readPointer(rawResult)
+  return JSON.parse(decode(result)) as Device
+}
+export function select_configuration(a0: Device, a1: number) {
+  const a0_buf = encode(JSON.stringify(a0))
+  let rawResult = _lib.symbols.select_configuration(
+    a0_buf,
+    a0_buf.byteLength,
+    a1,
+  )
   const result = readPointer(rawResult)
   return JSON.parse(decode(result)) as Device
 }

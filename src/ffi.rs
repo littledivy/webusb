@@ -107,6 +107,7 @@ pub struct FfiUsbControlTransferParameters {
   inner: UsbControlTransferParameters,
 }
 
+#[deno_bindgen]
 pub fn control_transfer_out(
   mut device: Device,
   setup: FfiUsbControlTransferParameters,
@@ -118,6 +119,7 @@ pub fn control_transfer_out(
     .unwrap()
 }
 
+#[deno_bindgen]
 pub fn control_transfer_in(
   mut device: Device,
   setup: FfiUsbControlTransferParameters,
@@ -131,4 +133,38 @@ pub fn control_transfer_in(
   // TODO: deallocate from JS
   std::mem::forget(data);
   ptr
+}
+
+#[deno_bindgen]
+fn select_alternate_interface(
+  mut device: Device,
+  interface_number: u8,
+  alternate_setting: u8,
+) -> Device {
+  device
+    .device
+    .select_alternate_interface(interface_number, alternate_setting)
+    .unwrap();
+  device
+}
+
+#[deno_bindgen]
+fn release_interface(mut device: Device, interface_number: u8) -> Device {
+  device.device.release_interface(interface_number).unwrap();
+  device
+}
+
+#[deno_bindgen]
+fn claim_interface(mut device: Device, interface_number: u8) -> Device {
+  device.device.claim_interface(interface_number).unwrap();
+  device
+}
+
+#[deno_bindgen]
+fn select_configuration(mut device: Device, configuration_value: u8) -> Device {
+  device
+    .device
+    .select_configuration(configuration_value)
+    .unwrap();
+  device
 }
