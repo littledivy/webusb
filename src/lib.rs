@@ -21,7 +21,11 @@
 
 #[cfg(feature = "serde_derive")]
 use serde::Deserialize;
+#[cfg(feature = "deno_ffi")]
+use serde::Deserialize;
 #[cfg(feature = "serde_derive")]
+use serde::Serialize;
+#[cfg(feature = "deno_ffi")]
 use serde::Serialize;
 
 #[cfg(feature = "libusb")]
@@ -37,11 +41,16 @@ pub use web_sys;
 
 pub mod constants;
 mod descriptors;
+#[cfg(feature = "deno_ffi")]
+pub mod ffi;
 
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
 use crate::descriptors::parse_webusb_url;
+
+#[cfg(feature = "deno_ffi")]
+use deno_bindgen::deno_bindgen;
 
 const EP_DIR_IN: u8 = 0x80;
 const EP_DIR_OUT: u8 = 0x0;
@@ -77,6 +86,7 @@ impl<T> From<Option<T>> for Error {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbConfiguration {
   // Index of String Descriptor describing this configuration.
   configuration_name: Option<String>,
@@ -131,6 +141,7 @@ impl UsbConfiguration {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbInterface {
   interface_number: u8,
   alternate: UsbAlternateInterface,
@@ -190,6 +201,7 @@ impl UsbInterface {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub enum UsbEndpointType {
   Bulk,
   Interrupt,
@@ -203,6 +215,7 @@ pub enum UsbEndpointType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum Direction {
   In,
   Out,
@@ -214,6 +227,7 @@ pub enum Direction {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbEndpoint {
   endpoint_number: u8,
   direction: Direction,
@@ -249,13 +263,14 @@ impl From<web_sys::UsbEndpoint> for UsbEndpoint {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbAlternateInterface {
-  alternate_setting: u8,
-  interface_class: u8,
-  interface_subclass: u8,
-  interface_protocol: u8,
-  interface_name: Option<String>,
-  endpoints: Vec<UsbEndpoint>,
+  pub alternate_setting: u8,
+  pub interface_class: u8,
+  pub interface_subclass: u8,
+  pub interface_protocol: u8,
+  pub interface_name: Option<String>,
+  pub endpoints: Vec<UsbEndpoint>,
 }
 
 #[cfg(feature = "wasm")]
@@ -323,6 +338,7 @@ impl UsbAlternateInterface {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbDevice {
   /// List of configurations supported by the device.
   /// Populated from the configuration descriptor.
@@ -383,8 +399,13 @@ pub struct UsbDevice {
   )]
   pub url: Option<String>,
 
+  #[cfg(feature = "deno_ffi")]
+  /// Resource ID associated with this Device instance.
+  pub rid: isize,
+
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
+  #[cfg(not(feature = "deno_ffi"))]
   device: rusb::Device<rusb::Context>,
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
@@ -393,6 +414,7 @@ pub struct UsbDevice {
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
+  #[cfg(not(feature = "deno_ffi"))]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
 }
 
@@ -1075,6 +1097,7 @@ impl UsbDevice {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum UsbRequestType {
   Standard,
   Class,
@@ -1087,6 +1110,7 @@ pub enum UsbRequestType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum UsbRecipient {
   Device,
   Interface,
@@ -1100,6 +1124,7 @@ pub enum UsbRecipient {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
+#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbControlTransferParameters {
   pub request_type: UsbRequestType,
   pub recipient: UsbRecipient,
