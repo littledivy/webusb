@@ -22,7 +22,7 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run tests
-      run: cargo test --verbose --test-threads=1
+      run: cargo test --verbose -- --test-threads=1
     - name: Generate coverage
       run: grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" -o ./lcov.info
     - name: Coveralls
