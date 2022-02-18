@@ -1482,15 +1482,6 @@ mod tests {
 
       device.open().await.unwrap();
 
-      // Not part of public API.
-      // This is to ensure that the device is not busy.
-      device
-        .device_handle
-        .as_mut()
-        .unwrap()
-        .set_auto_detach_kernel_driver(true)
-        .unwrap();
-
       // A real world application should use `device.configuration.is_none()`.
       match device.select_configuration(1).await {
         Ok(_) => {} // Unreachable in the test runner
@@ -1610,15 +1601,6 @@ mod tests {
       let mut device = test_device().await;
 
       device.open().await.unwrap();
-
-      // Not part of public API.
-      // This is to ensure that the device is not busy.
-      device
-        .device_handle
-        .as_mut()
-        .unwrap()
-        .set_auto_detach_kernel_driver(true)
-        .unwrap();
 
       // A real world application should use `device.configuration.is_none()`.
       match device.select_configuration(1).await {
