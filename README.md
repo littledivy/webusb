@@ -9,7 +9,7 @@ Rust.
 
 ```toml
 [dependencies]
-webusb = "0.3.0"
+webusb = "0.4.0"
 ```
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X4Y6IZ)
@@ -17,7 +17,7 @@ webusb = "0.3.0"
 ### Usage with Deno
 
 ```typescript
-import "https://deno.land/x/webusb/mod.ts";
+import "https://deno.land/x/webusb@0.4.0/mod.ts";
 
 const devices = await navigator.usb.getDevices();
 // Arduino Leonardo

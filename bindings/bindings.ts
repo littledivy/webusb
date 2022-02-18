@@ -18,8 +18,12 @@ function readPointer(v: any): Uint8Array {
 }
 const opts = {
   name: "webusb",
-  url: (new URL("../target/debug", import.meta.url)).toString(),
-  policy: CachePolicy.NONE,
+  url:
+    (new URL(
+      "https://github.com/littledivy/webusb/releases/download/0.4.0",
+      import.meta.url,
+    )).toString(),
+  policy: undefined,
 }
 const _lib = await prepare(opts, {
   claim_interface: {
@@ -84,10 +88,13 @@ const _lib = await prepare(opts, {
     nonblocking: false,
   },
 })
-export type UsbConfiguration = {
-  configurationName: string | undefined | null
-  configurationValue: number
-  interfaces: Array<UsbInterface>
+export type UsbEndpointType =
+  | "bulk"
+  | "interrupt"
+  | "isochronous"
+  | "control"
+export type Devices = {
+  devices: Array<UsbDevice>
 }
 export type UsbAlternateInterface = {
   alternateSetting: number
@@ -97,29 +104,14 @@ export type UsbAlternateInterface = {
   interfaceName: string | undefined | null
   endpoints: Array<UsbEndpoint>
 }
-export type UsbRecipient =
-  | "device"
-  | "interface"
-  | "endpoint"
-  | "other"
+export type Direction =
+  | "in"
+  | "out"
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
-}
-export type UsbControlTransferParameters = {
-  requestType: UsbRequestType
-  recipient: UsbRecipient
-  request: number
-  value: number
-  index: number
-}
-export type UsbInterface = {
-  interfaceNumber: number
-  alternate: UsbAlternateInterface
-  alternates: Array<UsbAlternateInterface>
-  claimed: boolean
 }
 /**
  * Represents a UsbDevice.
@@ -226,25 +218,37 @@ export type UsbRequestType =
   | "standard"
   | "class"
   | "vendor"
-export type Devices = {
-  devices: Array<UsbDevice>
-}
-export type Direction =
-  | "in"
-  | "out"
-export type UsbEndpointType =
-  | "bulk"
-  | "interrupt"
-  | "isochronous"
-  | "control"
-export type FfiUsbControlTransferParameters = {
-  inner: UsbControlTransferParameters
+export type UsbInterface = {
+  interfaceNumber: number
+  alternate: UsbAlternateInterface
+  alternates: Array<UsbAlternateInterface>
+  claimed: boolean
 }
 export type FfiDirection = {
   inner: Direction
 }
+export type UsbRecipient =
+  | "device"
+  | "interface"
+  | "endpoint"
+  | "other"
+export type UsbConfiguration = {
+  configurationName: string | undefined | null
+  configurationValue: number
+  interfaces: Array<UsbInterface>
+}
 export type Device = {
   device: UsbDevice
+}
+export type FfiUsbControlTransferParameters = {
+  inner: UsbControlTransferParameters
+}
+export type UsbControlTransferParameters = {
+  requestType: UsbRequestType
+  recipient: UsbRecipient
+  request: number
+  value: number
+  index: number
 }
 export function claim_interface(a0: Device, a1: number) {
   const a0_buf = encode(JSON.stringify(a0))
