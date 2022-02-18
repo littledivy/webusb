@@ -26,23 +26,21 @@ const ARDUINO_CONTROL_BYE: UsbControlTransferParameters =
     index: 2,
   };
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
   let context = Context::init()?;
-  let devices = context.devices().await?;
+  let devices = context.devices()?;
 
   let mut device = devices
     .into_iter()
     .find(|d| d.vendor_id == 0x2341 && d.product_id == 0x8036)
     .expect("Device not found.");
-  device.open().await?;
+  device.open()?;
 
-  device.claim_interface(2).await?;
-  device.select_alternate_interface(2, 0).await?;
+  device.claim_interface(2)?;
+  device.select_alternate_interface(2, 0)?;
 
   device
-    .control_transfer_out(ARDUINO_CONTROL_INIT, &[])
-    .await?;
+    .control_transfer_out(ARDUINO_CONTROL_INIT, &[])?;
 
   loop {
     let input: Option<u8> = std::io::stdin()
@@ -52,12 +50,12 @@ async fn main() -> Result<()> {
 
     match input {
       Some(b'H') => {
-        device.transfer_out(4, b"H").await?;
-        device.clear_halt(Direction::Out, 4).await?;
+        device.transfer_out(4, b"H")?;
+        device.clear_halt(Direction::Out, 4)?;
       }
       Some(b'L') => {
-        device.transfer_out(4, b"L").await?;
-        device.clear_halt(Direction::Out, 4).await?;
+        device.transfer_out(4, b"L")?;
+        device.clear_halt(Direction::Out, 4)?;
       }
       Some(b'Q') => break,
       _ => {}
@@ -65,8 +63,7 @@ async fn main() -> Result<()> {
   }
 
   device
-    .control_transfer_out(ARDUINO_CONTROL_BYE, &[])
-    .await?;
-  device.close().await?;
+    .control_transfer_out(ARDUINO_CONTROL_BYE, &[])?;
+  device.close()?;
   Ok(())
 }

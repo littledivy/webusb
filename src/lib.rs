@@ -1507,7 +1507,7 @@ mod tests {
     device.isochronous_transfer_in();
   }
 
-  #[tokio::test]
+  #[test]
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
   fn test_unimplemented2() {

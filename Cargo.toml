@@ -12,7 +12,10 @@ keywords = [
 ]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["rlib", "cdylib"]
+
+[examples]
+name = "blink"
 
 [features]
 default = ["libusb"]
