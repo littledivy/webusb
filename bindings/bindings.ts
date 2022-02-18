@@ -84,11 +84,30 @@ const _lib = await prepare(opts, {
     nonblocking: false,
   },
 })
+export type UsbEndpointType =
+  | "bulk"
+  | "interrupt"
+  | "isochronous"
+  | "control"
+export type Devices = {
+  devices: Array<UsbDevice>
+}
+export type UsbAlternateInterface = {
+  alternateSetting: number
+  interfaceClass: number
+  interfaceSubclass: number
+  interfaceProtocol: number
+  interfaceName: string | undefined | null
+  endpoints: Array<UsbEndpoint>
+}
 export type UsbEndpoint = {
   endpointNumber: number
   direction: Direction
   type: UsbEndpointType
   packetSize: number
+}
+export type Device = {
+  device: UsbDevice
 }
 export type UsbInterface = {
   interfaceNumber: number
@@ -96,28 +115,6 @@ export type UsbInterface = {
   alternates: Array<UsbAlternateInterface>
   claimed: boolean
 }
-export type FfiUsbControlTransferParameters = {
-  inner: UsbControlTransferParameters
-}
-export type UsbRecipient =
-  | "device"
-  | "interface"
-  | "endpoint"
-  | "other"
-export type FfiDirection = {
-  inner: Direction
-}
-export type Device = {
-  device: UsbDevice
-}
-export type UsbConfiguration = {
-  configurationName: string | undefined | null
-  configurationValue: number
-  interfaces: Array<UsbInterface>
-}
-export type Direction =
-  | "in"
-  | "out"
 /**
  * Represents a UsbDevice.
  * Only way you can obtain one is through `Context::devices`
@@ -220,13 +217,18 @@ export type UsbDevice = {
   device: UsbDevice
   deviceHandle: DeviceHandle<Context> | undefined | null
 }
-export type UsbAlternateInterface = {
-  alternateSetting: number
-  interfaceClass: number
-  interfaceSubclass: number
-  interfaceProtocol: number
-  interfaceName: string | undefined | null
-  endpoints: Array<UsbEndpoint>
+export type UsbRequestType =
+  | "standard"
+  | "class"
+  | "vendor"
+export type Direction =
+  | "in"
+  | "out"
+export type FfiDirection = {
+  inner: Direction
+}
+export type FfiUsbControlTransferParameters = {
+  inner: UsbControlTransferParameters
 }
 export type UsbControlTransferParameters = {
   requestType: UsbRequestType
@@ -235,18 +237,16 @@ export type UsbControlTransferParameters = {
   value: number
   index: number
 }
-export type Devices = {
-  devices: Array<UsbDevice>
+export type UsbConfiguration = {
+  configurationName: string | undefined | null
+  configurationValue: number
+  interfaces: Array<UsbInterface>
 }
-export type UsbRequestType =
-  | "standard"
-  | "class"
-  | "vendor"
-export type UsbEndpointType =
-  | "bulk"
-  | "interrupt"
-  | "isochronous"
-  | "control"
+export type UsbRecipient =
+  | "device"
+  | "interface"
+  | "endpoint"
+  | "other"
 export function claim_interface(a0: Device, a1: number) {
   const a0_buf = encode(JSON.stringify(a0))
   let rawResult = _lib.symbols.claim_interface(a0_buf, a0_buf.byteLength, a1)

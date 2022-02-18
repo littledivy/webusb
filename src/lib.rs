@@ -38,9 +38,6 @@ use core::convert::TryFrom;
 #[cfg(feature = "libusb")]
 pub use rusb;
 
-#[cfg(feature = "wasm")]
-pub use web_sys;
-
 pub mod constants;
 mod descriptors;
 #[cfg(feature = "deno_ffi")]
@@ -98,25 +95,6 @@ pub struct UsbConfiguration {
   interfaces: Vec<UsbInterface>,
 }
 
-#[cfg(feature = "wasm")]
-impl From<web_sys::UsbConfiguration> for UsbConfiguration {
-  fn from(config: web_sys::UsbConfiguration) -> Self {
-    let interfaces = {
-      let array = config.interfaces().to_vec();
-      array
-        .into_iter()
-        .map(|itf| UsbInterface::from(web_sys::UsbInterface::from(itf)))
-        .collect()
-    };
-
-    Self {
-      configuration_name: config.configuration_name(),
-      configuration_value: config.configuration_value(),
-      interfaces,
-    }
-  }
-}
-
 #[cfg(feature = "libusb")]
 impl UsbConfiguration {
   pub fn from(
@@ -149,27 +127,6 @@ pub struct UsbInterface {
   alternate: UsbAlternateInterface,
   alternates: Vec<UsbAlternateInterface>,
   claimed: bool,
-}
-
-#[cfg(feature = "wasm")]
-impl From<web_sys::UsbInterface> for UsbInterface {
-  fn from(interface: web_sys::UsbInterface) -> Self {
-    let alternates = {
-      let array = interface.alternates().to_vec();
-      array
-        .into_iter()
-        .map(|ep| {
-          UsbAlternateInterface::from(web_sys::UsbAlternateInterface::from(ep))
-        })
-        .collect()
-    };
-    Self {
-      interface_number: interface.interface_number(),
-      alternate: UsbAlternateInterface::from(interface.alternate()),
-      alternates,
-      claimed: interface.claimed(),
-    }
-  }
 }
 
 #[cfg(feature = "libusb")]
@@ -238,27 +195,6 @@ pub struct UsbEndpoint {
   packet_size: u16,
 }
 
-#[cfg(feature = "wasm")]
-impl From<web_sys::UsbEndpoint> for UsbEndpoint {
-  fn from(ep: web_sys::UsbEndpoint) -> Self {
-    Self {
-      endpoint_number: ep.endpoint_number(),
-      direction: match ep.direction() {
-        web_sys::UsbDirection::In => Direction::In,
-        web_sys::UsbDirection::Out => Direction::Out,
-        _ => unreachable!(),
-      },
-      r#type: match ep.type_() {
-        web_sys::UsbEndpointType::Bulk => UsbEndpointType::Bulk,
-        web_sys::UsbEndpointType::Interrupt => UsbEndpointType::Interrupt,
-        web_sys::UsbEndpointType::Isochronous => UsbEndpointType::Isochronous,
-        _ => unreachable!(),
-      },
-      packet_size: ep.packet_size() as u16,
-    }
-  }
-}
-
 #[derive(Clone)]
 #[cfg_attr(
   feature = "serde_derive",
@@ -273,28 +209,6 @@ pub struct UsbAlternateInterface {
   pub interface_protocol: u8,
   pub interface_name: Option<String>,
   pub endpoints: Vec<UsbEndpoint>,
-}
-
-#[cfg(feature = "wasm")]
-impl From<web_sys::UsbAlternateInterface> for UsbAlternateInterface {
-  fn from(interface: web_sys::UsbAlternateInterface) -> Self {
-    let endpoints = {
-      let array = interface.endpoints().to_vec();
-      array
-        .into_iter()
-        .map(|ep| UsbEndpoint::from(web_sys::UsbEndpoint::from(ep)))
-        .collect()
-    };
-
-    Self {
-      alternate_setting: interface.alternate_setting(),
-      interface_class: interface.interface_class(),
-      interface_subclass: interface.interface_subclass(),
-      interface_protocol: interface.interface_protocol(),
-      interface_name: interface.interface_name(),
-      endpoints,
-    }
-  }
 }
 
 #[cfg(feature = "libusb")]
@@ -433,10 +347,6 @@ pub struct UsbDevice {
   device: rusb::Device<rusb::Context>,
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
-  #[cfg(feature = "wasm")]
-  device: web_sys::UsbDevice,
-
-  #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
   #[cfg(not(feature = "deno_ffi"))]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
@@ -529,7 +439,8 @@ impl UsbDevice {
     {
       #[cfg(feature = "deno_ffi")]
       {
-        ffi::RESOURCES
+        // TODO: ugly but works
+        let mut handle = ffi::RESOURCES
           .lock()
           .unwrap()
           .get_mut(&self.rid)
@@ -538,6 +449,15 @@ impl UsbDevice {
           .unwrap()
           .device
           .open()?;
+        ffi::RESOURCES
+          .lock()
+          .unwrap()
+          .get_mut(&self.rid)
+          .unwrap()
+          .lock()
+          .unwrap()
+          .device_handle
+          .replace(handle);
       }
 
       #[cfg(not(feature = "deno_ffi"))]
@@ -545,12 +465,6 @@ impl UsbDevice {
         let handle = self.device.open()?;
         self.device_handle = Some(handle);
       }
-    }
-
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.open();
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
     }
 
     // 5.
@@ -581,12 +495,6 @@ impl UsbDevice {
       }
     }
 
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.close();
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-    }
-
     // 7.
     self.opened = false;
     Ok(())
@@ -597,13 +505,6 @@ impl UsbDevice {
     &mut self,
     configuration_value: u8,
   ) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.select_configuration(configuration_value);
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-      // TODO: sync configuration
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -657,12 +558,6 @@ impl UsbDevice {
   }
 
   pub fn claim_interface(&mut self, interface_number: u8) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.claim_interface(interface_number);
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-      // TODO: sync configuration
-    }
 
     #[cfg(feature = "libusb")]
     {
@@ -702,12 +597,6 @@ impl UsbDevice {
   }
 
   pub fn release_interface(&mut self, interface_number: u8) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.release_interface(interface_number);
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -752,14 +641,6 @@ impl UsbDevice {
     interface_number: u8,
     alternate_setting: u8,
   ) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self
-        .device
-        .select_alternate_interface(interface_number, alternate_setting);
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -797,12 +678,6 @@ impl UsbDevice {
     setup: UsbControlTransferParameters,
     length: usize,
   ) -> Result<Vec<u8>> {
-    #[cfg(feature = "wasm")]
-    {
-      // TODO
-      return Ok(vec![0; length]);
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -864,12 +739,6 @@ impl UsbDevice {
     setup: UsbControlTransferParameters,
     data: &[u8],
   ) -> Result<usize> {
-    #[cfg(feature = "wasm")]
-    {
-      // TODO
-      return Ok(0);
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 2.
@@ -921,11 +790,6 @@ impl UsbDevice {
     direction: Direction,
     endpoint_number: u8,
   ) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      // TODO
-    }
-
     #[cfg(feature = "libusb")]
     {
       let active_configuration =
@@ -981,12 +845,6 @@ impl UsbDevice {
     endpoint_number: u8,
     length: usize,
   ) -> Result<Vec<u8>> {
-    #[cfg(feature = "wasm")]
-    {
-      // TODO
-      return Ok(vec![0; length]);
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -1059,12 +917,6 @@ impl UsbDevice {
     endpoint_number: u8,
     data: &[u8],
   ) -> Result<usize> {
-    #[cfg(feature = "wasm")]
-    {
-      // TODO
-      return Ok(0);
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 2.
@@ -1124,12 +976,6 @@ impl UsbDevice {
   }
 
   pub fn reset(&mut self) -> Result<()> {
-    #[cfg(feature = "wasm")]
-    {
-      let fut = self.device.reset();
-      wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-    }
-
     #[cfg(feature = "libusb")]
     {
       // 3.
@@ -1187,45 +1033,6 @@ pub struct UsbControlTransferParameters {
   pub request: u8,
   pub value: u16,
   pub index: u16,
-}
-
-#[cfg(feature = "wasm")]
-impl TryFrom<web_sys::UsbDevice> for UsbDevice {
-  type Error = Error;
-
-  fn try_from(dev: web_sys::UsbDevice) -> Result<UsbDevice> {
-    let configurations = {
-      let array = dev.configurations().to_vec();
-      array
-        .into_iter()
-        .map(|config| {
-          UsbConfiguration::from(web_sys::UsbConfiguration::from(config))
-        })
-        .collect()
-    };
-
-    Ok(UsbDevice {
-      configurations,
-      configuration: dev.configuration().map(|c| UsbConfiguration::from(c)),
-      device_class: dev.device_class(),
-      device_subclass: dev.device_subclass(),
-      device_protocol: dev.device_protocol(),
-      device_version_major: dev.device_version_major(),
-      device_version_minor: dev.device_version_minor(),
-      device_version_subminor: dev.device_version_subminor(),
-      product_id: dev.product_id(),
-      usb_version_major: dev.usb_version_major(),
-      usb_version_minor: dev.usb_version_minor(),
-      usb_version_subminor: dev.usb_version_subminor(),
-      vendor_id: dev.vendor_id(),
-      manufacturer_name: dev.manufacturer_name(),
-      product_name: dev.product_name(),
-      serial_number: dev.serial_number(),
-      opened: dev.opened(),
-      url: None,
-      device: dev,
-    })
-  }
 }
 
 #[cfg(feature = "libusb")]
@@ -1373,33 +1180,6 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
   }
 }
 
-#[cfg(feature = "wasm")]
-pub struct Context(web_sys::Usb);
-
-#[cfg(feature = "wasm")]
-impl Context {
-  pub fn init() -> Result<Self> {
-    let window = web_sys::window().unwrap();
-    Ok(Self(window.navigator().usb()))
-  }
-
-  pub fn devices(&self) -> Result<Vec<UsbDevice>> {
-    let usb = self.0.clone();
-
-    let fut = usb.get_devices();
-    let fut_value = wasm_bindgen_futures::JsFuture::from(fut).await.unwrap();
-    let devices_array: js_sys::Array = js_sys::Array::from(&fut_value);
-
-    let devices = devices_array
-      .to_vec()
-      .into_iter()
-      .map(|val| UsbDevice::try_from(web_sys::UsbDevice::from(val)).unwrap())
-      .collect();
-
-    Ok(devices)
-  }
-}
-
 /// A WebUSB Context. Provides APIs for device enumaration.
 #[cfg(feature = "libusb")]
 pub struct Context(rusb::Context);
@@ -1458,8 +1238,8 @@ mod tests {
     device
   }
 
-  #[tokio::test]
-  async fn test_bos() -> crate::Result<()> {
+  #[test]
+  fn test_bos() -> crate::Result<()> {
     // Read and Parse BOS the descriptor.
     let mut device = test_device();
     assert_eq!(
@@ -1470,8 +1250,8 @@ mod tests {
     Ok(())
   }
 
-  #[tokio::test]
-  async fn test_device_initial_state() -> crate::Result<()> {
+  #[test]
+  fn test_device_initial_state() -> crate::Result<()> {
     let mut device = test_device();
 
     device.open()?;
@@ -1482,8 +1262,8 @@ mod tests {
     Ok(())
   }
 
-  #[tokio::test]
-  async fn test_device_invalid_state() -> crate::Result<()> {
+  #[test]
+  fn test_device_invalid_state() -> crate::Result<()> {
     let mut device = test_device();
 
     // Without open() should panic.
@@ -1528,21 +1308,9 @@ mod tests {
     Ok(())
   }
 
-  fn block_on<F: std::future::Future>(future: F) -> F::Output {
-    use tokio::runtime;
-
-    let rt = runtime::Builder::new_current_thread()
-      .enable_all()
-      .build()
-      .unwrap();
-
-    rt.block_on(future)
-  }
-
   #[flaky_test::flaky_test]
   fn test_device_blink() {
-    block_on(async move {
-      async fn test(device: &mut UsbDevice) {
+      fn test(device: &mut UsbDevice) {
         device.transfer_out(4, b"H").unwrap();
         device.clear_halt(Direction::Out, 4).unwrap();
 
@@ -1623,12 +1391,10 @@ mod tests {
       device.release_interface(2).unwrap();
       device.reset().unwrap();
       device.close().unwrap();
-    })
   }
 
   #[test]
   fn test_device_control() {
-    block_on(async move {
       async fn test(device: &mut UsbDevice) {
         let device_descriptor_bytes = device
           .control_transfer_in(
@@ -1749,13 +1515,12 @@ mod tests {
       device.release_interface(2).unwrap();
       device.reset().unwrap();
       device.close().unwrap();
-    })
   }
 
-  #[tokio::test]
+  #[test]
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
-  async fn test_unimplemented1() {
+  fn test_unimplemented1() {
     let mut device = test_device();
     device.isochronous_transfer_in();
   }
@@ -1763,13 +1528,13 @@ mod tests {
   #[tokio::test]
   #[should_panic]
   // IMPORTANT! These are meant to fail when the methods are implemented.
-  async fn test_unimplemented2() {
+  fn test_unimplemented2() {
     let mut device = test_device();
     device.isochronous_transfer_out();
   }
 
-  #[tokio::test]
-  async fn test_device_not_found() -> crate::Result<()> {
+  #[test]
+  fn test_device_not_found() -> crate::Result<()> {
     let mut device = test_device();
 
     device.open()?;
@@ -1783,8 +1548,8 @@ mod tests {
     Ok(())
   }
 
-  #[tokio::test]
-  async fn test_validate_control_setup() {
+  #[test]
+  fn test_validate_control_setup() {
     let mut device = test_device();
     device.open().unwrap();
 

@@ -142,12 +142,12 @@ class UsbDevice {
 
   controlTransferOut(
     setup: UsbControlTransferParameters,
-    data: Uint8Array,
+    data?: Uint8Array,
   ): Promise<number> {
     return control_transfer_out(
       this.#inner,
       { inner: setup },
-      data,
+      data || new Uint8Array(),
     );
   }
 
