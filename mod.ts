@@ -15,8 +15,9 @@ import {
   transfer_out,
   UsbControlTransferParameters,
 } from "./bindings/bindings.ts";
+export * from "./bindings/bindings.ts";
 
-class UsbDevice {
+export class UsbDevice {
   #inner;
 
   constructor(raw) {
@@ -205,4 +206,5 @@ class Usb {
 
 const usb = new Usb();
 navigator.usb = usb;
+
 export default usb;
