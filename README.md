@@ -17,7 +17,7 @@ webusb = "0.4.0"
 ### Usage with Deno
 
 ```typescript
-import "https://deno.land/x/webusb@0.4.0/mod.ts";
+import "https://deno.land/x/webusb/mod.ts";
 
 const devices = await navigator.usb.getDevices();
 // Arduino Leonardo
