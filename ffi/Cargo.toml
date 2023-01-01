@@ -1,0 +1,19 @@
+[package]
+name = "deno_webusb"
+description = "FFI bindings to the WebUSB API implementation in Rust"
+version = "0.5.0"
+authors = ["Divy Srivastava <dj.srivastava23@gmail.com>"]
+edition = "2018"
+repository = "https://github.com/littledivy/webusb"
+license = "MIT"
+keywords = [
+    "usb",
+    "webusb"
+]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+path = "lib.rs"
+
+[dependencies]
+webusb = { version = "0.5.0", path = "../" }

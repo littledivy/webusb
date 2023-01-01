@@ -21,11 +21,7 @@
 
 #[cfg(feature = "serde_derive")]
 use serde::Deserialize;
-#[cfg(feature = "deno_ffi")]
-use serde::Deserialize;
 #[cfg(feature = "serde_derive")]
-use serde::Serialize;
-#[cfg(feature = "deno_ffi")]
 use serde::Serialize;
 
 use std::ops::DerefMut;
@@ -40,16 +36,11 @@ pub use rusb;
 
 pub mod constants;
 mod descriptors;
-#[cfg(feature = "deno_ffi")]
-pub mod ffi;
 
 use crate::constants::BOS_DESCRIPTOR_TYPE;
 use crate::constants::GET_URL_REQUEST;
 use crate::descriptors::parse_bos;
 use crate::descriptors::parse_webusb_url;
-
-#[cfg(feature = "deno_ffi")]
-use deno_bindgen::deno_bindgen;
 
 const EP_DIR_IN: u8 = 0x80;
 const EP_DIR_OUT: u8 = 0x0;
@@ -85,7 +76,6 @@ impl<T> From<Option<T>> for Error {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbConfiguration {
   // Index of String Descriptor describing this configuration.
   configuration_name: Option<String>,
@@ -121,7 +111,6 @@ impl UsbConfiguration {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbInterface {
   interface_number: u8,
   alternate: UsbAlternateInterface,
@@ -160,7 +149,6 @@ impl UsbInterface {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub enum UsbEndpointType {
   Bulk,
   Interrupt,
@@ -174,7 +162,6 @@ pub enum UsbEndpointType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
 pub enum Direction {
   In,
   Out,
@@ -186,7 +173,6 @@ pub enum Direction {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbEndpoint {
   endpoint_number: u8,
   direction: Direction,
@@ -201,7 +187,6 @@ pub struct UsbEndpoint {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbAlternateInterface {
   pub alternate_setting: u8,
   pub interface_class: u8,
@@ -246,22 +231,6 @@ impl UsbAlternateInterface {
   }
 }
 
-#[cfg(feature = "deno_ffi")]
-macro_rules! get_device_handle {
-  ($self: expr) => {
-    ffi::RESOURCES
-      .lock()
-      .unwrap()
-      .get_mut(&$self.rid)
-      .unwrap()
-      .lock()
-      .unwrap()
-      .device_handle
-      .as_mut()
-  };
-}
-
-#[cfg(not(feature = "deno_ffi"))]
 macro_rules! get_device_handle {
   ($self: expr) => {
     $self.device_handle.as_mut()
@@ -276,7 +245,6 @@ macro_rules! get_device_handle {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbDevice {
   /// List of configurations supported by the device.
   /// Populated from the configuration descriptor.
@@ -337,18 +305,12 @@ pub struct UsbDevice {
   )]
   pub url: Option<String>,
 
-  #[cfg(feature = "deno_ffi")]
-  /// Resource ID associated with this Device instance.
-  pub rid: i32,
-
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
-  #[cfg(not(feature = "deno_ffi"))]
   device: rusb::Device<rusb::Context>,
 
   #[cfg_attr(feature = "serde_derive", serde(skip))]
   #[cfg(feature = "libusb")]
-  #[cfg(not(feature = "deno_ffi"))]
   device_handle: Option<rusb::DeviceHandle<rusb::Context>>,
 }
 
@@ -437,34 +399,8 @@ impl UsbDevice {
     // 4.
     #[cfg(feature = "libusb")]
     {
-      #[cfg(feature = "deno_ffi")]
-      {
-        // TODO: ugly but works
-        let mut handle = ffi::RESOURCES
-          .lock()
-          .unwrap()
-          .get_mut(&self.rid)
-          .unwrap()
-          .lock()
-          .unwrap()
-          .device
-          .open()?;
-        ffi::RESOURCES
-          .lock()
-          .unwrap()
-          .get_mut(&self.rid)
-          .unwrap()
-          .lock()
-          .unwrap()
-          .device_handle
-          .replace(handle);
-      }
-
-      #[cfg(not(feature = "deno_ffi"))]
-      {
         let handle = self.device.open()?;
         self.device_handle = Some(handle);
-      }
     }
 
     // 5.
@@ -488,11 +424,6 @@ impl UsbDevice {
         }
         None => unreachable!(),
       };
-
-      #[cfg(not(feature = "deno_ffi"))]
-      {
-        self.device_handle = None;
-      }
     }
 
     // 7.
@@ -514,21 +445,7 @@ impl UsbDevice {
         .position(|c| c.configuration_value == configuration_value)
       {
         Some(config_idx) => {
-          #[cfg(not(feature = "deno_ffi"))]
-          {
-            self.device.config_descriptor(config_idx as u8)?
-          }
-
-          #[cfg(feature = "deno_ffi")]
-          ffi::RESOURCES
-            .lock()
-            .unwrap()
-            .get_mut(&self.rid)
-            .unwrap()
-            .lock()
-            .unwrap()
-            .device
-            .config_descriptor(config_idx as u8)?
+          self.device.config_descriptor(config_idx as u8)?
         }
         None => return Err(Error::NotFound),
       };
@@ -999,7 +916,7 @@ impl UsbDevice {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
+#[repr(u8)]
 pub enum UsbRequestType {
   Standard,
   Class,
@@ -1012,7 +929,7 @@ pub enum UsbRequestType {
   derive(Serialize, Deserialize),
   serde(rename_all = "lowercase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "lowercase"))]
+#[repr(u8)]
 pub enum UsbRecipient {
   Device,
   Interface,
@@ -1026,7 +943,6 @@ pub enum UsbRecipient {
   derive(Serialize, Deserialize),
   serde(rename_all = "camelCase")
 )]
-#[cfg_attr(feature = "deno_ffi", deno_bindgen, serde(rename_all = "camelCase"))]
 pub struct UsbControlTransferParameters {
   pub request_type: UsbRequestType,
   pub recipient: UsbRecipient,
@@ -1140,9 +1056,6 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       .read_serial_number_string_ascii(&device_descriptor)
       .ok();
 
-    #[cfg(feature = "deno_ffi")]
-    let rid = ffi::RESOURCES.lock().unwrap().len() as i32; // TODO
-
     let usb_device = UsbDevice {
       configurations,
       configuration,
@@ -1162,16 +1075,9 @@ impl TryFrom<rusb::Device<rusb::Context>> for UsbDevice {
       serial_number,
       opened: false,
       url,
-      #[cfg(not(feature = "deno_ffi"))]
       device,
-      #[cfg(not(feature = "deno_ffi"))]
       device_handle: None,
-      #[cfg(feature = "deno_ffi")]
-      rid, // TODO
     };
-
-    #[cfg(feature = "deno_ffi")]
-    ffi::insert_device(rid, device);
 
     // Explicitly close the device.
     drop(handle);

@@ -11,24 +11,18 @@ keywords = [
     "webusb"
 ]
 
-[lib]
-crate-type = ["rlib", "cdylib"]
-
 [examples]
 name = "blink"
 
 [features]
 default = ["libusb"]
 libusb = ["rusb", "libusb1-sys"]
-deno_ffi = ["deno_bindgen", "serde", "libusb", "once_cell"]
 serde_derive = ["serde"]
 
 [dependencies]
 rusb = { version = "0.8.1", optional = true }
 libusb1-sys = { version = "0.5.0" , optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-deno_bindgen = { version = "0.6.0", optional = true }
-once_cell = { version = "1.9.0", optional = true }
 
 [dev-dependencies]
 # For a loose connection :-)
