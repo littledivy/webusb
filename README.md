@@ -12,8 +12,6 @@ Rust.
 webusb = "0.5.0"
 ```
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X4Y6IZ)
-
 ### Usage with Deno
 
 ```typescript
